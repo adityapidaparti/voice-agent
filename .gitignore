@@ -1,0 +1,9 @@
+/target/
+/.hegel/
+/mutants.out*/
+/.run/
+*.db
+*.db-*
+.env
+*.log
+/PLAN.md
