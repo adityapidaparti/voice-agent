@@ -143,7 +143,7 @@ fn handle(
                 &runtime.webhook_key,
                 clock_ms,
             )?;
-            controller.ingest_phase(observation)?;
+            controller.ingest_phase_at(observation, now())?;
         } else if route == "/v1/functions/report" {
             let observation = crate::observations::verify_report(
                 &raw,
@@ -313,29 +313,39 @@ pub fn run_hosted(config: HostedConfig, enable_live_calling: bool) -> Result<()>
     }
     config.validate(now())?;
     let (retell_key, workflow_token) = config.runtime_secrets()?;
-    let authority = || HttpWorkflow::new(&config.workflow_base_url, workflow_token.clone());
-    let mut controller = Controller::open_configured(
-        &config.database,
-        config.policy.clone(),
-        Box::new(authority()?),
-    )?;
+    let authority = || -> Result<Box<dyn crate::workflow::WorkflowAuthority>> {
+        if let Some(path) = &config.rp_database {
+            Ok(Box::new(crate::rp::RpWorkflow::open(path)?))
+        } else {
+            Ok(Box::new(HttpWorkflow::new(
+                &config.workflow_base_url,
+                workflow_token
+                    .clone()
+                    .ok_or(Error::new("runtime_secret_required", 3))?,
+            )?))
+        }
+    };
+    let mut controller =
+        Controller::open_configured(&config.database, config.policy.clone(), authority()?)?;
     if let Err(error) = controller.set_starts_enabled(config.starts_enabled) {
         // Recovery must continue serving end/status even after a latched safety incident.
         if error.code != "safety_incident_requires_resolution" {
             return Err(error);
         }
     }
-    let mut worker = Controller::open_configured(
-        &config.database,
-        config.policy.clone(),
-        Box::new(authority()?),
-    )?;
-    let mut writer = Controller::open_configured(
-        &config.database,
-        config.policy.clone(),
-        Box::new(authority()?),
-    )?;
-    let mut sink = authority()?;
+    let mut worker =
+        Controller::open_configured(&config.database, config.policy.clone(), authority()?)?;
+    let mut writer =
+        Controller::open_configured(&config.database, config.policy.clone(), authority()?)?;
+    let mut sink: Box<dyn crate::controller::CanonicalWorkflow + Send> =
+        if let Some(path) = &config.rp_database {
+            Box::new(crate::rp::RpWorkflow::open(path)?)
+        } else {
+            Box::new(HttpWorkflow::new(
+                &config.workflow_base_url,
+                workflow_token.ok_or(Error::new("runtime_secret_required", 3))?,
+            )?)
+        };
     let mut provider = RetellProvider::new(config.retell.clone(), retell_key.clone())?;
     // A listener is established before queued work can be recovered.
     let server = Server::http(config.listen).map_err(|_| Error::new("listen_unavailable", 6))?;
@@ -355,7 +365,7 @@ pub fn run_hosted(config: HostedConfig, enable_live_calling: bool) -> Result<()>
         .name("voice-writeback-worker".into())
         .spawn(move || loop {
             // The potentially slow RP sink cannot occupy the call/stop worker.
-            if writer.flush_outbox(&mut sink).is_ok() {
+            if writer.flush_outbox(sink.as_mut()).is_ok() {
                 writeback_tick.store(now(), Ordering::Release);
             }
             std::thread::sleep(Duration::from_secs(1));

@@ -44,6 +44,19 @@ pub struct Handoff {
     pub resume_ai: bool,
     pub authentication: String,
 }
+/// Native menu navigation is a model-guided capability, not an exact digit/count limit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MenuNavigation {
+    #[default]
+    SpokenOnly,
+    ModelGuidedPublicMenu,
+}
+impl MenuNavigation {
+    pub fn is_spoken_only(&self) -> bool {
+        *self == Self::SpokenOnly
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Intent {
@@ -64,6 +77,8 @@ pub struct Intent {
     pub provider: String,
     pub agent_id: String,
     pub agent_version: u32,
+    #[serde(default, skip_serializing_if = "MenuNavigation::is_spoken_only")]
+    pub menu_navigation: MenuNavigation,
     pub not_before: i64,
     pub not_after: i64,
 }

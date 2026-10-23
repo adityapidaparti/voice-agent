@@ -15,6 +15,7 @@ fn policy() -> ControllerPolicy {
             destination: i.destination,
             agent_id: i.agent_id,
             agent_version: i.agent_version,
+            menu_navigation: voice_agent::contract::MenuNavigation::SpokenOnly,
             rate_ref: i.limits.rate_ref,
             rate_cents_per_minute: i.limits.rate_cents_per_minute,
             handoff_recipient_ref: i.handoff.recipient_ref,

@@ -3,12 +3,15 @@ mod common;
 use common::operation;
 use hegel::prelude::*;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tiny_http::{Header, Response, Server, StatusCode};
-use voice_agent::contract::EventKind;
-use voice_agent::provider::{retell_llm_template, CreateOutcome, Provider};
+use voice_agent::contract::{EventKind, MenuNavigation};
+use voice_agent::provider::{
+    retell_llm_template, retell_llm_template_for, CreateOutcome, Provider,
+};
 use voice_agent::retell::{
     bounded_duration_seconds, snapshot_digest, RetellConfig, RetellProvider,
 };
@@ -40,19 +43,43 @@ struct Fake {
     url: String,
     seen: Arc<Mutex<Vec<RequestRecord>>>,
     thread: JoinHandle<()>,
+    finish_signal: Option<Arc<AtomicBool>>,
 }
 impl Fake {
     fn new(replies: Vec<Reply>) -> Self {
+        Self::scripted(replies, false)
+    }
+    // Remains available until finish even when policy correctly sends no request.
+    // If a guard is removed, valid responses let the real transport advance.
+    fn allowing_no_requests(replies: Vec<Reply>) -> Self {
+        Self::scripted(replies, true)
+    }
+    fn scripted(replies: Vec<Reply>, allow_no_requests: bool) -> Self {
         let server = Server::http("127.0.0.1:0").unwrap();
         let url = format!("http://{}", server.server_addr());
         let seen = Arc::new(Mutex::new(Vec::new()));
         let worker_seen = seen.clone();
+        let finish_signal = allow_no_requests.then(|| Arc::new(AtomicBool::new(false)));
+        let worker_finish = finish_signal.clone();
         let thread = std::thread::spawn(move || {
             for reply in replies {
-                let mut request = server
-                    .recv_timeout(Duration::from_secs(4))
-                    .unwrap()
-                    .expect("expected HTTP request");
+                let mut request = if let Some(done) = &worker_finish {
+                    loop {
+                        if let Some(request) =
+                            server.recv_timeout(Duration::from_millis(20)).unwrap()
+                        {
+                            break request;
+                        }
+                        if done.load(Ordering::Acquire) {
+                            return;
+                        }
+                    }
+                } else {
+                    server
+                        .recv_timeout(Duration::from_secs(4))
+                        .unwrap()
+                        .expect("expected HTTP request")
+                };
                 let mut body = String::new();
                 request.as_reader().read_to_string(&mut body).unwrap();
                 let authorization = request
@@ -86,9 +113,17 @@ impl Fake {
                 "unexpected retry"
             );
         });
-        Self { url, seen, thread }
+        Self {
+            url,
+            seen,
+            thread,
+            finish_signal,
+        }
     }
     fn finish(self) -> Vec<RequestRecord> {
+        if let Some(done) = &self.finish_signal {
+            done.store(true, Ordering::Release);
+        }
         self.thread.join().unwrap();
         Arc::try_unwrap(self.seen).unwrap().into_inner().unwrap()
     }
@@ -116,6 +151,7 @@ fn configuration(agent: &Value, llm: &Value) -> RetellConfig {
         agent_snapshot_sha256: snapshot_digest(agent).unwrap(),
         llm_snapshot_sha256: snapshot_digest(llm).unwrap(),
         webhook_url: None,
+        menu_navigation: MenuNavigation::SpokenOnly,
     }
 }
 fn config() -> RetellConfig {
@@ -627,4 +663,248 @@ fn registered_call_scope_and_uniqueness_are_checked_before_exposing_its_identity
         );
         fake.finish();
     }
+}
+
+fn native_profile() -> (RetellConfig, Value, Value) {
+    let (mut agent, _) = snapshots();
+    let url = "https://voice.example/v1/webhooks/retell";
+    agent["webhook_url"] = json!(url);
+    let mut llm = retell_llm_template_for(MenuNavigation::ModelGuidedPublicMenu);
+    llm["llm_id"] = json!("llm_demo");
+    llm["version"] = json!(2);
+    llm["is_published"] = json!(true);
+    let tools = llm["general_tools"].as_array_mut().unwrap();
+    tools.push(voice_agent::observations::phase_tool_for(
+        "https://voice.example/v1/functions/observe",
+        MenuNavigation::ModelGuidedPublicMenu,
+    ));
+    tools.push(voice_agent::observations::report_tool(
+        "https://voice.example/v1/functions/report",
+    ));
+    let mut config = configuration(&agent, &llm);
+    config.menu_navigation = MenuNavigation::ModelGuidedPublicMenu;
+    config.webhook_url = Some(url.into());
+    (config, agent, llm)
+}
+fn native_operation() -> voice_agent::contract::Operation {
+    let mut op = operation();
+    let intent = op.intent.as_mut().unwrap();
+    intent.menu_navigation = MenuNavigation::ModelGuidedPublicMenu;
+    op.digest = intent.digest().unwrap();
+    op
+}
+fn native_call(status: &str) -> Value {
+    let mut response = call(status);
+    response["metadata"]["intent_digest"] = json!(native_operation().digest);
+    response
+}
+
+#[test]
+fn native_profile_requires_a_public_https_signed_observation_endpoint() {
+    let (mut config, _, _) = native_profile();
+    assert!(config.validate().is_ok());
+    config.webhook_url = None;
+    assert_eq!(
+        config.validate().unwrap_err().code,
+        "native_menu_requires_signed_observations"
+    );
+    for url in [
+        "http://voice.example/v1/webhooks/retell",
+        "https://127.0.0.1/v1/webhooks/retell",
+        "https://[::1]/v1/webhooks/retell",
+        "https://host.local/v1/webhooks/retell",
+        "https://localhost./v1/webhooks/retell",
+        "https://host.localhost./v1/webhooks/retell",
+        "https://host.local./v1/webhooks/retell",
+        "https://host.internal./v1/webhooks/retell",
+        "https://intranet/v1/webhooks/retell",
+    ] {
+        config.webhook_url = Some(url.into());
+        assert!(config.validate().is_err(), "{url}");
+    }
+}
+
+#[test]
+fn native_profile_pins_exact_tools_and_cannot_be_selected_by_a_matching_hash_alone() {
+    let (config, agent, llm) = native_profile();
+    assert!(config.validate_snapshots(&agent, &llm).is_ok());
+    let mut spoken = config.clone();
+    spoken.menu_navigation = MenuNavigation::SpokenOnly;
+    assert_eq!(
+        spoken.validate_snapshots(&agent, &llm).unwrap_err().code,
+        "retell_unsafe_llm_configuration"
+    );
+    for scenario in 0..5 {
+        let mut changed = llm.clone();
+        match scenario {
+            0 => changed["general_tools"][1]["delay_ms"] = json!(0),
+            1 => changed["general_tools"][1]["description"] = json!("Enter account codes"),
+            2 => changed["general_tools"][1]["type"] = json!("transfer_call"),
+            3 => {
+                changed["general_tools"].as_array_mut().unwrap().pop();
+            }
+            _ => changed["general_prompt"] = retell_llm_template()["general_prompt"].clone(),
+        }
+        let mut reviewed = config.clone();
+        reviewed.llm_snapshot_sha256 = snapshot_digest(&changed).unwrap();
+        assert!(
+            reviewed.validate_snapshots(&agent, &changed).is_err(),
+            "case {scenario}"
+        );
+    }
+}
+
+#[test]
+fn native_create_requires_the_same_profile_in_the_approved_intent_and_configuration() {
+    let (native_config, native_agent, native_llm) = native_profile();
+    let (spoken_agent, spoken_llm) = snapshots();
+    for (config, agent, llm, op, response) in [
+        (
+            native_config,
+            native_agent,
+            native_llm,
+            operation(),
+            call("registered"),
+        ),
+        (
+            configuration(&spoken_agent, &spoken_llm),
+            spoken_agent,
+            spoken_llm,
+            native_operation(),
+            native_call("registered"),
+        ),
+    ] {
+        assert!(config.validate_snapshots(&agent, &llm).is_ok());
+        let fake = Fake::allowing_no_requests(vec![
+            Reply::json(200, agent),
+            Reply::json(200, llm),
+            Reply::json(201, response),
+        ]);
+        let mut provider = RetellProvider::for_loopback_tests(config, &fake.url).unwrap();
+        let outcome = provider.create(&op, 1000);
+        let seen = fake.finish();
+        assert!(
+            seen.is_empty(),
+            "mismatched profile touched the network: {seen:?}"
+        );
+        assert_eq!(outcome, CreateOutcome::Rejected);
+    }
+}
+
+#[test]
+fn native_create_preserves_approved_scope_and_does_not_override_tools_per_call() {
+    let (config, agent, llm) = native_profile();
+    let fake = Fake::new(vec![
+        Reply::json(200, agent),
+        Reply::json(200, llm),
+        Reply::json(201, native_call("registered")),
+    ]);
+    let mut provider = RetellProvider::for_loopback_tests(config, &fake.url).unwrap();
+    assert_eq!(
+        provider.create_guarded(&native_operation(), 1000, 1100),
+        CreateOutcome::Accepted("call_demo".into())
+    );
+    let requests = fake.finish();
+    assert_eq!(requests.len(), 3);
+    let sent = &requests[2].body;
+    assert_eq!(sent["metadata"]["intent_digest"], native_operation().digest);
+    let task: Value = serde_json::from_str(
+        sent["retell_llm_dynamic_variables"]["approved_task"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(task["menu_navigation"], "model_guided_public_menu");
+    assert_eq!(task["authentication"], "separate_direct_call");
+    assert_eq!(sent["agent_override"]["agent"]["allow_user_dtmf"], false);
+    assert!(sent["agent_override"]["retell_llm"]
+        .get("general_tools")
+        .is_none());
+    assert!(sent["agent_override"]["retell_llm"]["begin_message"]
+        .as_str()
+        .unwrap()
+        .contains("AI assistant"));
+}
+
+#[test]
+fn native_create_ambiguity_is_reconciled_and_stopped_without_a_second_dispatch() {
+    let (config, agent, llm) = native_profile();
+    let mut registered = native_call("registered");
+    for field in ["start_timestamp", "end_timestamp", "call_cost"] {
+        registered.as_object_mut().unwrap().remove(field);
+    }
+    let fake = Fake::new(vec![
+        Reply::json(200, agent),
+        Reply::json(200, llm),
+        Reply::json(500, json!({"status":"error"})),
+        Reply::json(200, json!({"items":[registered],"has_more":false})),
+        Reply::json(204, Value::Null),
+    ]);
+    let mut provider = RetellProvider::for_loopback_tests(config, &fake.url).unwrap();
+    let mut op = native_operation();
+    assert_eq!(
+        provider.create_guarded(&op, 1000, 1100),
+        CreateOutcome::Unknown
+    );
+    let evidence = provider.reconcile(&op, 1001).unwrap();
+    assert!(evidence.events.is_empty());
+    assert_eq!(evidence.call_id, Some("call_demo".into()));
+    op.call_id = evidence.call_id;
+    op.stop_reason = Some("authentication_required".into());
+    provider.stop(&op, 1001).unwrap();
+    assert!(!op.all_legs_ended);
+    let seen = fake.finish();
+    assert_eq!(
+        seen.iter()
+            .filter(|r| r.path == "/v2/create-phone-call")
+            .count(),
+        1
+    );
+    assert_eq!(seen.last().unwrap().path, "/v2/stop-call/call_demo");
+}
+
+#[test]
+fn native_pin_reads_cannot_extend_an_expiring_authorization_lease() {
+    let (config, agent, llm) = native_profile();
+    let mut first = Reply::json(200, agent);
+    first.delay_ms = 100;
+    let fake = Fake::new(vec![first, Reply::json(200, llm)]);
+    let mut provider = RetellProvider::for_loopback_tests(config, &fake.url).unwrap();
+    assert_eq!(
+        provider.create_guarded(&native_operation(), 1000, 1001),
+        CreateOutcome::Rejected
+    );
+    assert!(fake.finish().iter().all(|r| r.method == "GET"));
+}
+
+/// Approval and configured tool capability must agree for both supported profiles;
+/// neither direction of mismatch can borrow authority from the other profile.
+#[hegel::test]
+fn only_the_profile_specific_prompt_and_tools_satisfy_the_configuration_pin(tc: TestCase) {
+    let native_configuration = tc.draw(gs::booleans());
+    let native_template = tc.draw(gs::booleans());
+    let (mut config, agent, mut llm) = native_profile();
+    config.menu_navigation = if native_configuration {
+        MenuNavigation::ModelGuidedPublicMenu
+    } else {
+        MenuNavigation::SpokenOnly
+    };
+    if !native_template {
+        llm = retell_llm_template();
+        llm["llm_id"] = json!("llm_demo");
+        llm["version"] = json!(2);
+        llm["is_published"] = json!(true);
+        llm["general_tools"].as_array_mut().unwrap().extend([
+            voice_agent::observations::phase_tool("https://voice.example/v1/functions/observe"),
+            voice_agent::observations::report_tool("https://voice.example/v1/functions/report"),
+        ]);
+    }
+    config.llm_snapshot_sha256 = snapshot_digest(&llm).unwrap();
+    let accepted = native_configuration == native_template;
+    tc.event(if accepted {
+        "matching profiles"
+    } else {
+        "mismatched profiles"
+    });
+    assert_eq!(config.validate_snapshots(&agent, &llm).is_ok(), accepted);
 }

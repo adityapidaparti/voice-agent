@@ -155,3 +155,56 @@ after submitting clients exit. Publication scans covered all 48 staged candidate
 files and every reachable Git blob; Gitleaks found no leaks. The unchanged resolved
 dependency set contains 173 packages with permissive licensing options. Deployment
 templates were reviewed as source, not installed or accepted on a real host.
+
+
+## Native menus and concrete RP adapter
+
+The opt-in menu profile has digest/directory/published-agent pin checks, while
+omitted or explicit spoken-only fields retain the prior digest and template.
+A separate signed phase schema makes uncertainty and prohibited actions stop
+boundaries. Examples and a generated command model cover accepted and rejected
+profiles, changed approvals, two-level menus, replay, revocation, expiry, uncertain
+creates and stop preservation. A coordinated SQLite lock-contention test proves
+that waiting for a transaction cannot extend authority to acknowledge a digit.
+
+The concrete RP tests use a minimal original synthetic schema in a temporary
+SQLite file. They exercise the existing two-case allocation, New York midnight
+and DST boundaries, blocked/retired/ambiguous cases, uncertain portal operations,
+concurrent reservations, immutable versions, parent-state preservation, rollback,
+item promotion and orphan-claim relinking. A controller composition test publishes
+termination before analysis and verifies that every legitimate outbox version can
+be acknowledged without treating termination as business success. No live RP
+rows or provider accounts participate in these tests.
+
+The initial targeted run caught 19 of 20 new faults. The survivor removed both
+provider profile checks: its test previously used an unavailable port, so a
+transport failure masqueraded as policy rejection. The strengthened test supplies
+valid independent snapshot/create responses and asserts that neither mismatch
+direction reaches the network. The first focused rerun also exposed a harness
+cache issue: preserved copied timestamps allowed Cargo to reuse a previous mutant
+binary for an unmodified baseline. That failed baseline is not mutation evidence.
+All three scratch-copy harnesses now use fresh source timestamps; the initial logs
+were preserved and the complete new campaign was rerun.
+
+The corrected run passed its unmodified baseline and caught all 20 new faults,
+with zero surviving, unbuildable/infrastructure-failed or timed-out mutants. These
+faults cover profile/stop/clock/menu boundaries, daily allocation, portal and call
+reservations, conflicting and out-of-order evidence, parent updates, identity
+changes, early termination publication, sync markers and timezone boundaries.
+The targeted score applies to this fault set, not every possible implementation
+change. Run it serially with `python3 scripts/menu_rp_mutations.py`; `--fault NAME`
+supports focused triage without overwriting the full-run results.
+
+The timezone dependency addition resolves seven new packages, all with MIT or
+Apache-2.0 licensing options; the complete resolved graph contains 180 packages.
+
+The final integrated local suite passed 233 tests, including 49 Hegel properties
+configured for 5,000 cases each. Formatting, Clippy across all targets with warnings
+denied, and the synthetic CLI demo passed. The demo confirmed duplicate-start
+recovery and completion after submitting clients exited. These checks do not
+establish live Retell, hosted deployment or production RP acceptance.
+
+Publication review covered all 53 staged candidate files and all reachable Git
+history. The privacy tripwire and Gitleaks found no leaks; staged source and
+dependency-license changes were reviewed before publication. Private source data,
+local recovery archives and test output are excluded from the repository.

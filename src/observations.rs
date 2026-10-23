@@ -16,6 +16,8 @@ pub enum ObservedPhase {
     AuthenticationRequired,
     DtmfRequired,
     DeclinedAi,
+    UncertainMenu,
+    ProhibitedAction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +105,25 @@ pub fn phase_tool(url: &str) -> Value {
             "required":["operation_id","call_id","intent_digest","sequence","phase"]
         }
     })
+}
+
+/// Native profile schema is separate so existing spoken-only published pins stay valid.
+pub fn phase_tool_for(url: &str, profile: crate::contract::MenuNavigation) -> Value {
+    let mut tool = phase_tool(url);
+    if profile == crate::contract::MenuNavigation::ModelGuidedPublicMenu {
+        tool["description"] = json!("Report each IVR menu, hold, conversation, or safety boundary with a new sequence. Report authentication_required, declined_ai, uncertain_menu, or prohibited_action and end. Report dtmf_required before a public routing digit only under the approved model_guided_public_menu profile; if the callback fails, end without pressing. Never send authentication data or conversation text.");
+        tool["parameters"]["properties"]["phase"]["enum"] = json!([
+            "ivr",
+            "hold",
+            "talking",
+            "authentication_required",
+            "dtmf_required",
+            "declined_ai",
+            "uncertain_menu",
+            "prohibited_action"
+        ]);
+    }
+    tool
 }
 
 fn valid_scope(operation_id: &str, call_id: &str, intent_digest: &str, sequence: u16) -> bool {

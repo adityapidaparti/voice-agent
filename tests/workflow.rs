@@ -40,6 +40,7 @@ fn writeback() -> Writeback {
     let mut result = common::operation().result;
     result.result_version = 7;
     Writeback {
+        call_ended: true,
         operation_id: result.operation_id.clone(),
         result_version: result.result_version,
         work_item: result.work_item.clone(),
@@ -465,4 +466,12 @@ fn reservation_validation_accepts_only_valid_opaque_identifiers_and_preserves_bi
             && (!bound || (present && text == "reservation_example"));
         assert_eq!(response.validate(&request, 1000).is_ok(), expected);
     }
+}
+
+#[test]
+fn older_durable_writebacks_do_not_infer_termination_from_a_result() {
+    let mut message = serde_json::to_value(writeback()).unwrap();
+    message.as_object_mut().unwrap().remove("call_ended");
+    let restored: Writeback = serde_json::from_value(message).unwrap();
+    assert!(!restored.call_ended);
 }

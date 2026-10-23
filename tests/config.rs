@@ -84,6 +84,7 @@ fn configuration(directory: &Path, clock: i64) -> HostedConfig {
         database: directory.join("controller.db"),
         credentials_file,
         retell_key_env: "VOICE_TEST_RETELL_KEY".into(),
+        rp_database: None,
         workflow_token_env: "VOICE_TEST_WORKFLOW_TOKEN".into(),
         workflow_base_url: "https://workflow.example.invalid".into(),
         policy: ControllerPolicy {
@@ -97,6 +98,7 @@ fn configuration(directory: &Path, clock: i64) -> HostedConfig {
                 },
                 agent_id: "agent_demo".into(),
                 agent_version: 1,
+                menu_navigation: voice_agent::contract::MenuNavigation::SpokenOnly,
                 rate_ref: "rate_demo_v1".into(),
                 rate_cents_per_minute: 10,
                 handoff_recipient_ref: "owner".into(),
@@ -109,6 +111,7 @@ fn configuration(directory: &Path, clock: i64) -> HostedConfig {
             from_number: "+12025550101".into(),
             agent_id: "agent_demo".into(),
             agent_version: 1,
+            menu_navigation: voice_agent::contract::MenuNavigation::SpokenOnly,
             llm_id: "llm_demo".into(),
             llm_version: 1,
             agent_snapshot_sha256: "a".repeat(64),
@@ -530,4 +533,52 @@ fn hosted_http_rereads_revocation_and_rejects_coordinator_approval_without_vendo
             assert!(!String::from_utf8_lossy(&bytes).contains("synthetic-sensitive-body"));
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn local_rp_backend_is_explicit_private_and_exclusive_without_opening_database() {
+    let dir = private_directory();
+    let mut config = configuration(dir.path(), 1000);
+    let rp = dir.path().join("canonical.db");
+    // Configuration checks permissions only; this is intentionally not a SQLite database.
+    private_write(&rp, b"synthetic permission fixture");
+    config.rp_database = Some(rp.clone());
+    assert_eq!(
+        config.validate(1000).unwrap_err().code,
+        "invalid_rp_backend_configuration"
+    );
+    config.workflow_token_env.clear();
+    config.workflow_base_url.clear();
+    config.validate(1000).unwrap();
+    assert_eq!(std::fs::read(&rp).unwrap(), b"synthetic permission fixture");
+    assert!(!config.database.exists());
+    config.rp_database = Some(config.database.clone());
+    assert_eq!(
+        config.validate(1000).unwrap_err().code,
+        "invalid_rp_backend_configuration"
+    );
+    config.rp_database = Some(dir.path().join("missing.db"));
+    assert!(config.validate(1000).is_err());
+    assert!(!dir.path().join("missing.db").exists());
+}
+
+#[test]
+fn published_agent_and_directory_must_share_the_exact_menu_profile() {
+    use voice_agent::contract::MenuNavigation;
+    let dir = private_directory();
+    let mut config = configuration(dir.path(), 1000);
+    config.retell.menu_navigation = MenuNavigation::ModelGuidedPublicMenu;
+    config.retell.webhook_url = Some("https://voice.example.invalid/v1/webhooks/retell".into());
+    assert_eq!(
+        config.validate(1000).unwrap_err().code,
+        "policy_agent_pin_mismatch"
+    );
+    config.policy.directory[0].menu_navigation = MenuNavigation::ModelGuidedPublicMenu;
+    config.validate(1000).unwrap();
+    config.retell.menu_navigation = MenuNavigation::SpokenOnly;
+    assert_eq!(
+        config.validate(1000).unwrap_err().code,
+        "policy_agent_pin_mismatch"
+    );
 }

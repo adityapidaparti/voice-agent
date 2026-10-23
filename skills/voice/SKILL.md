@@ -12,8 +12,14 @@ deployment, expenditure or calls. Use the hosted route only after those specific
 authorizations and a synthetic own-number acceptance call. Never substitute demo
 contacts, tokens, rates or canonical workflow gates for approved configuration.
 
-1. Produce a minimal intent with a verified recipient reference, precise purpose,
-   source-versioned approved facts, allowed actions and cost/time bounds.
+1. For an authorized existing RP database, use `voice rp-snapshot --database FILE
+   --reference claim:LOCAL_ID` (or `item:LOCAL_ID`) to read the selected canonical
+   case/version and daily gate. It writes nothing and grants no contact approval.
+   Produce a minimal intent with a verified recipient reference, precise purpose,
+   source-versioned approved facts, allowed actions and cost/time bounds. Keep
+   `spoken_only` unless the user explicitly approves `model_guided_public_menu`
+   with matching operator directory and published agent pins. Explain that native
+   routing cannot enforce an exact digit allowlist or press count.
 2. Run `voice dryrun --intent FILE`. Present the full scope and digest for review.
 3. Approval requires the authenticated user role. `--via user` alone is not authority.
    The coordinator must never create or claim a user's approval.
@@ -24,7 +30,9 @@ contacts, tokens, rates or canonical workflow gates for approved configuration.
 7. Inspect `status.canonical_writeback` for pending and acknowledged result versions.
    The configured outbox writes to canonical RP; do not create a second claims ledger.
    RP owns eligibility, policy and completion rules. Failed writeback never justifies
-   redial. Categorical reports are unverified model evidence, not confirmed facts.
+   redial. A local RP acknowledgement does not mean its Notion record was synced;
+   perform the parent-owned exact-row sync/read-back and retain pending status on
+   failure. Categorical reports are unverified model evidence, not confirmed facts.
 
 AI identity must be disclosed. Never impersonate the user or infer facts.
 Authentication, attestations, payments and scope changes go to the human.

@@ -76,15 +76,20 @@ The main JSON config uses `schema_version: 1`, `starts_enabled`, `public_origin`
 `credentials_file` (absolute private paths), `retell_key_env` and
 `workflow_token_env` (distinct `VOICE_` environment names), `workflow_base_url`
 (an HTTPS origin), `policy` (the approved directory and rate pins), and `retell`
-(the pinned provider configuration). Unknown fields are errors. An optional Retell
+(the pinned provider configuration). For the concrete local RP backend, instead set
+`rp_database` to the existing private canonical SQLite path and omit
+`workflow_token_env` and `workflow_base_url`. The backends are mutually exclusive;
+no RP token or HTTP service is needed for the SQLite path. It opens the existing
+schema without creating or migrating it. See [RP mapping](rp-adapter.md).
+Unknown fields are errors. An optional Retell
 webhook URL must equal `public_origin` plus `/v1/webhooks/retell`.
 
 Run `voice config-check --config /absolute/private/config.json` before launch.
 This checks schema, pins, policy expiry and file permissions without reading the
 provider/RP environment secrets or making network requests. A successful check
 is not a live-provider or deployment acceptance result. Configure secrets through
-the host's secret mechanism. The service reads only its two explicitly named
-secret variables, and only in the live runtime; secrets never belong in command
+the host's secret mechanism. The service reads only its explicitly named provider secret and, for the HTTP
+backend, its workflow secret, and only in the live runtime; secrets never belong in command
 arguments or source files.
 
 The reviewed launch command is:
@@ -133,8 +138,8 @@ financial authentication data in an intent, tool payload or captured call.
 ## Required acceptance before an Amex workflow
 
 The parent must arrange approved Retell signup/terms/KYC, an outbound number and
-funding; approved hosting and secrets; an actual canonical RP adapter matching the
-published protocol; verified official recipient and purpose; and explicit call and
+funding; approved hosting and secrets; authorized access to the existing canonical RP database and its parent-owned
+Notion sync; verified official recipient and purpose; and explicit call and
 cost bounds. First conduct a separately approved own-number test with synthetic
 facts, then verify expiry/revocation, AI disclosure, interruption/stop, restart,
 IVR/hold behavior, cost accounting and canonical result capture. A successful

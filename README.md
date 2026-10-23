@@ -10,8 +10,10 @@ All provider verification during development uses fake HTTP peers. No live call,
 account, paid resource or deployment has been authorized or accepted by these tests.
 
 For activation, use [hosted setup](docs/hosting.md), the [Retell transport](docs/retell-transport.md),
-and the [canonical RP protocol](docs/workflow-adapter.md). Native DTMF, transfer and
-same-call sensitive authentication are disabled. Financial account identifiers must
+and the [concrete RP adapter](docs/rp-adapter.md). Spoken menus are the default;
+model-guided public keypad routing requires an explicit approved profile and pinned
+agent. Exact digit/count enforcement, transfer and same-call sensitive authentication
+remain unavailable. Financial account identifiers must
 never enter this AI call. Categorical answers remain explicitly unverified reports.
 
 ## Try it

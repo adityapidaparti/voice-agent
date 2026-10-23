@@ -33,6 +33,7 @@ fn open(path: &Path) -> Controller {
             destination: intent.destination,
             agent_id: intent.agent_id,
             agent_version: intent.agent_version,
+            menu_navigation: voice_agent::contract::MenuNavigation::SpokenOnly,
             rate_ref: intent.limits.rate_ref,
             rate_cents_per_minute: intent.limits.rate_cents_per_minute,
             handoff_recipient_ref: intent.handoff.recipient_ref,

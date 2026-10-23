@@ -25,8 +25,13 @@ pub struct HostedConfig {
     pub database: PathBuf,
     pub credentials_file: PathBuf,
     pub retell_key_env: String,
+    #[serde(default)]
     pub workflow_token_env: String,
+    #[serde(default)]
     pub workflow_base_url: String,
+    /// Existing canonical RP database; mutually exclusive with an HTTP authority.
+    #[serde(default)]
+    pub rp_database: Option<PathBuf>,
     pub policy: ControllerPolicy,
     pub retell: RetellConfig,
 }
@@ -258,18 +263,38 @@ impl HostedConfig {
             || !self.database.is_absolute()
             || self.database == self.credentials_file
             || !environment_name(&self.retell_key_env)
-            || !environment_name(&self.workflow_token_env)
-            || self.retell_key_env == self.workflow_token_env
         {
             return Err(Error::new("invalid_hosted_configuration", 4));
         }
         let origin = https_origin(&self.public_origin)?;
-        https_origin(&self.workflow_base_url)?;
+        if let Some(path) = &self.rp_database {
+            if !self.workflow_token_env.is_empty()
+                || !self.workflow_base_url.is_empty()
+                || !path.is_absolute()
+                || path == &self.database
+                || path == &self.credentials_file
+            {
+                return Err(Error::new("invalid_rp_backend_configuration", 4));
+            }
+            ensure_private_path(
+                path.parent().ok_or(Error::new("unsafe_hosted_path", 4))?,
+                true,
+            )?;
+            ensure_private_path(path, false)?;
+        } else {
+            if !environment_name(&self.workflow_token_env)
+                || self.retell_key_env == self.workflow_token_env
+            {
+                return Err(Error::new("invalid_hosted_configuration", 4));
+            }
+            https_origin(&self.workflow_base_url)?;
+        }
         self.policy.validate(clock)?;
         self.retell.validate()?;
         if self.policy.directory.iter().any(|entry| {
             entry.agent_id != self.retell.agent_id
                 || entry.agent_version != self.retell.agent_version
+                || entry.menu_navigation != self.retell.menu_navigation
         }) {
             return Err(Error::new("policy_agent_pin_mismatch", 4));
         }
@@ -303,7 +328,7 @@ impl HostedConfig {
     }
 
     /// Call only after the explicit live-runtime flag. Never called by config-check.
-    pub fn runtime_secrets(&self) -> Result<(String, String)> {
+    pub fn runtime_secrets(&self) -> Result<(String, Option<String>)> {
         let read = |name: &str| {
             let secret =
                 std::env::var(name).map_err(|_| Error::new("runtime_secret_required", 3))?;
@@ -317,6 +342,13 @@ impl HostedConfig {
             }
             Ok(secret)
         };
-        Ok((read(&self.retell_key_env)?, read(&self.workflow_token_env)?))
+        Ok((
+            read(&self.retell_key_env)?,
+            if self.rp_database.is_some() {
+                None
+            } else {
+                Some(read(&self.workflow_token_env)?)
+            },
+        ))
     }
 }

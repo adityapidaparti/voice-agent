@@ -9,6 +9,8 @@ pub struct DirectoryEntry {
     pub destination: Destination,
     pub agent_id: String,
     pub agent_version: u32,
+    #[serde(default)]
+    pub menu_navigation: MenuNavigation,
     pub rate_ref: String,
     pub rate_cents_per_minute: u32,
     pub handoff_recipient_ref: String,
@@ -63,6 +65,7 @@ impl ControllerPolicy {
                 && d.destination.source_version == i.destination.source_version
                 && d.agent_id == i.agent_id
                 && d.agent_version == i.agent_version
+                && d.menu_navigation == i.menu_navigation
                 && d.rate_ref == i.limits.rate_ref
                 && d.rate_cents_per_minute == i.limits.rate_cents_per_minute
                 && d.handoff_recipient_ref == i.handoff.recipient_ref

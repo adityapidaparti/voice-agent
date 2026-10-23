@@ -1,3 +1,7 @@
+> For the existing RP project, use the [concrete SQLite adapter](rp-adapter.md).
+> This HTTP protocol is an optional boundary for independently operated canonical
+> services. No such RP HTTP service is assumed to exist.
+
 # Generic canonical-workflow adapter
 
 This is a proposed versioned HTTP contract for a canonical return-protection (RP)

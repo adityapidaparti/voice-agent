@@ -7,8 +7,14 @@ sequence number from 1 through 128. The controller binds those fields to a
 submitted operation and durably deduplicates observations before acknowledgement.
 Changed evidence under a reused sequence is a conflict, not a harmless replay.
 
-The accepted states are IVR, hold, talking, authentication required, DTMF required,
-and AI declined. The last three request a safety stop. A signed classification
+The default published schema accepts IVR, hold, talking, authentication required,
+DTMF required and AI declined; the last three request a stop. The opt-in native
+public-menu schema additionally accepts uncertain menu and prohibited action,
+both mandatory stop boundaries. In that profile only, DTMF required records a
+public-routing prerequisite without counting another IVR menu or extending its
+timer. A stopped, revoked, expired or closed native call cannot acknowledge even
+an exact replay of that prerequisite. The controller conservatively stops after
+three reported IVR menus; this is not a verified count of actual digit presses. A signed classification
 is still a model observation: it does not prove consent, successful authentication,
 business completion, or a human takeover. Total duration and approval revocation
 remain controller responsibilities even if the model never reports a phase.
@@ -22,9 +28,11 @@ A lost callback cannot establish a new permission.
 
 No current native Retell LLM tool can enforce the requested exact outbound digit
 allowlist. Its Press Digit tool chooses digits from model instructions, and the
-live-call update endpoint does not document a send-DTMF operation. This release
-therefore excludes Press Digit from the pinned agent. A DTMF-only menu produces a
-stop and a direct human follow-up; spoken IVR menus remain usable. `DtmfPlan` only
+live-call update endpoint does not document a send-DTMF operation. The default profile therefore excludes Press Digit. The explicitly approved
+`model_guided_public_menu` profile enables native public department routing with
+its own prompt, exact pinned tools and signed callback endpoint. It has no hard
+digit/count guarantee; the model must stop rather than guess, enter identifiers,
+authenticate or accept terms. See [Retell profile details](retell-transport.md). `DtmfPlan` only
 validates a possible provider-neutral menu plan: distinct single decimal digits,
 at most three presses, with consumed reservations counted. It does not authorize
 or execute digits and is not part of the current approved intent. Any future

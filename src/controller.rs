@@ -38,6 +38,9 @@ pub struct Writeback {
     pub result_version: u32,
     pub work_item: WorkItem,
     pub result: CallResult,
+    /// True only when every leg is confirmed ended with no unresolved leg evidence.
+    #[serde(default)]
+    pub call_ended: bool,
 }
 #[derive(Debug, Serialize)]
 pub struct WritebackStatus {
@@ -118,6 +121,7 @@ fn publish_result(db: &Connection, op: &Operation) -> Result<()> {
         result_version: op.result.result_version,
         work_item: op.result.work_item.clone(),
         result: op.result.clone(),
+        call_ended: op.all_legs_ended && !op.uncertain_legs,
     };
     db.execute(
         "INSERT OR IGNORE INTO outbox(operation_id,version,data) VALUES(?1,?2,?3)",
@@ -655,11 +659,23 @@ impl Controller {
         &mut self,
         observation: crate::observations::PhaseObservation,
     ) -> Result<()> {
+        let received_at = observation.observed_at;
+        self.ingest_phase_at(observation, received_at)
+    }
+    /// Receipt clock is supplied by the hosted endpoint after signature verification.
+    pub fn ingest_phase_at(
+        &mut self,
+        observation: crate::observations::PhaseObservation,
+        received_at: i64,
+    ) -> Result<()> {
+        let began = std::time::Instant::now();
+        let original_received_at = received_at;
         use crate::observations::{ObservedPhase, MAX_PHASE_SEQUENCE};
         if !identifier(&observation.operation_id)
             || !identifier(&observation.call_id)
             || !(1..=MAX_PHASE_SEQUENCE).contains(&observation.sequence)
             || observation.observed_at < 0
+            || received_at < observation.observed_at
         {
             return Err(Error::new("invalid_phase_scope", 4));
         }
@@ -673,6 +689,49 @@ impl Controller {
             || op.call_id.as_ref() != Some(&observation.call_id)
         {
             return Err(Error::new("phase_scope_conflict", 4));
+        }
+        let elapsed = began.elapsed();
+        // Round up because the receipt clock is in whole seconds. A database
+        // lock wait must never extend a call's approval or stopping deadline.
+        let elapsed_seconds = elapsed
+            .as_secs()
+            .saturating_add(u64::from(elapsed.subsec_nanos() > 0));
+        let received_at =
+            received_at.saturating_add(i64::try_from(elapsed_seconds).unwrap_or(i64::MAX));
+        // A native menu callback is a model's prerequisite to choosing a digit.
+        // Do not acknowledge even an old replay after a local safety boundary.
+        if observation.phase == ObservedPhase::DtmfRequired
+            && !op
+                .intent
+                .as_ref()
+                .is_some_and(|i| i.menu_navigation == MenuNavigation::SpokenOnly)
+        {
+            let a = approval(&tx, &op.approval_id)?;
+            let incident: bool = tx.query_row(
+                "SELECT value FROM settings WHERE key='safety_incident'",
+                [],
+                |r| r.get(0),
+            )?;
+            if !op.locked()
+                || op.ai_stopped
+                || op.stop_reason.is_some()
+                || op.lifecycle == Lifecycle::Ending
+                || incident
+                || a.revoked
+                || received_at < observation.observed_at
+                || original_received_at < a.issued_at
+                || received_at >= a.expires_at
+                || received_at >= op.deadline.saturating_sub(5)
+                || !op.intent.as_ref().is_some_and(|i| {
+                    i.validate(received_at).is_ok()
+                        && self
+                            .policy
+                            .as_ref()
+                            .is_none_or(|p| p.authorize(i, received_at).is_ok())
+                })
+            {
+                return Err(Error::new("menu_navigation_stopped", 4));
+            }
         }
         let mut canonical = observation.clone();
         canonical.observed_at = 0; // A transport re-signing must not recount the menu or reset a timer.
@@ -698,7 +757,15 @@ impl Controller {
         }
         let stop = match observation.phase {
             ObservedPhase::AuthenticationRequired => Some("authentication_required"),
-            ObservedPhase::DtmfRequired => Some("bounded_dtmf_unavailable"),
+            ObservedPhase::DtmfRequired
+                if !op.intent.as_ref().is_some_and(|intent| {
+                    intent.menu_navigation == MenuNavigation::ModelGuidedPublicMenu
+                }) =>
+            {
+                Some("bounded_dtmf_unavailable")
+            }
+            ObservedPhase::UncertainMenu => Some("uncertain_menu"),
+            ObservedPhase::ProhibitedAction => Some("prohibited_action"),
             ObservedPhase::DeclinedAi => Some("declined_ai"),
             _ => None,
         };
@@ -739,7 +806,15 @@ impl Controller {
             actual_cost_cents: None,
         };
         op.call_id = Some(observation.call_id);
-        op.observe(&e)?;
+        if observation.phase == ObservedPhase::DtmfRequired && stop.is_none() {
+            // The separately reported IVR menu owns its count/timer. A digit
+            // prerequisite is evidence only, never a second menu observation.
+            op.last_observed_at = op.last_observed_at.max(e.observed_at);
+            op.result.evidence_refs.push(e.key.clone());
+            op.result.result_version += 1;
+        } else {
+            op.observe(&e)?;
+        }
         if let Some(reason) = stop {
             op.stop_reason.get_or_insert(reason.into());
             op.lifecycle = Lifecycle::Ending;
@@ -1064,6 +1139,15 @@ impl Controller {
                 }
                 if a.revoked {
                     op.stop_reason.get_or_insert("approval_revoked".into());
+                }
+                if now < a.issued_at
+                    || now >= a.expires_at
+                    || !op
+                        .intent
+                        .as_ref()
+                        .is_some_and(|i| now >= i.not_before && now < i.not_after)
+                {
+                    op.stop_reason.get_or_insert("approval_expired".into());
                 }
                 if op.submitted_at.is_none() {
                     let usable = op.intent.as_ref().is_some_and(|i| {

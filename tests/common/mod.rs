@@ -53,6 +53,7 @@ pub fn intent() -> Intent {
         provider: "retell".into(),
         agent_id: "agent_demo".into(),
         agent_version: 1,
+        menu_navigation: voice_agent::contract::MenuNavigation::SpokenOnly,
         not_before: 1000,
         not_after: 4600,
     }

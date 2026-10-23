@@ -48,9 +48,9 @@ with tempfile.TemporaryDirectory(prefix="voice-hosted-mutations-") as temp:
     for name in ["Cargo.toml", "Cargo.lock", "hegel.toml", "src", "tests"]:
         source = ROOT / name
         if source.is_dir():
-            shutil.copytree(source, scratch / name)
+            shutil.copytree(source, scratch / name, copy_function=shutil.copy)
         else:
-            shutil.copy2(source, scratch / name)
+            shutil.copy(source, scratch / name)
     env = {**os.environ, "CARGO_NET_OFFLINE": "true", "CARGO_BUILD_JOBS": "1",
            "RUST_TEST_THREADS": "1", "HEGEL_TEST_CASES": "200",
            "CARGO_TARGET_DIR": os.environ.get("CARGO_TARGET_DIR", str(OUTPUT / "build"))}

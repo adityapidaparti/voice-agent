@@ -34,9 +34,9 @@ with tempfile.TemporaryDirectory(prefix="voice-seeded-mutations-") as temporary:
     for item in ["Cargo.toml", "Cargo.lock", "hegel.toml", "src", "tests"]:
         src, dest = root/item, scratch/item
         if src.is_dir():
-            shutil.copytree(src, dest)
+            shutil.copytree(src, dest, copy_function=shutil.copy)
         else:
-            shutil.copy2(src, dest)
+            shutil.copy(src, dest)
     env = {**os.environ, "CARGO_NET_OFFLINE":"true", "CARGO_BUILD_JOBS":"1", "RUST_TEST_THREADS":"1", "HEGEL_TEST_CASES":"200", "CARGO_TARGET_DIR":os.environ.get("CARGO_TARGET_DIR", str(output/"build"))}
     def run(name):
         log = output/(name+".log")

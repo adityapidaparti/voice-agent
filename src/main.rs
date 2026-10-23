@@ -84,6 +84,13 @@ enum Command {
     },
     /// Hash an already provisioned VOICE_TOKEN without printing or storing the bearer.
     CredentialDigest,
+    /// Read the exact canonical RP case and today's allocation without writing or making a call.
+    RpSnapshot {
+        #[arg(long)]
+        database: PathBuf,
+        #[arg(long)]
+        reference: String,
+    },
     /// Explain remaining launch gates without reading credentials or contacting services.
     Doctor,
 }
@@ -138,6 +145,7 @@ fn example() -> Intent {
         provider: "retell".into(),
         agent_id: "agent_demo".into(),
         agent_version: 1,
+        menu_navigation: voice_agent::contract::MenuNavigation::SpokenOnly,
         not_before: clock,
         not_after: clock + 1800,
     }
@@ -312,6 +320,14 @@ fn run(cli: Cli) -> Result<Value> {
                 .map_err(|_| Error::new("controller_credential_required", 3))?;
             Ok(json!({"token_sha256":voice_agent::config::token_digest(&token)?}))
         }
+        Command::RpSnapshot {
+            database,
+            reference,
+        } => Ok(serde_json::to_value(voice_agent::rp::snapshot(
+            database,
+            &reference,
+            now(),
+        )?)?),
         Command::Doctor => Ok(
             json!({"live_calling":false,"simulation_available":true,"configured_runtime_available":true,"live_acceptance_verified":false,"setup_gates":[
                 "Explicit approval for funded provider account, outbound number and controlled calls",

@@ -137,6 +137,54 @@ fn phase_tool_fixes_scope_and_omits_speech_and_transcript_wrapper() {
     assert_eq!(schema["required"].as_array().unwrap().len(), 5);
     assert_eq!(schema["properties"]["sequence"]["minimum"], 1);
     assert_eq!(schema["properties"]["sequence"]["maximum"], 128);
+    assert_eq!(
+        schema["properties"]["phase"]["enum"],
+        json!([
+            "ivr",
+            "hold",
+            "talking",
+            "authentication_required",
+            "dtmf_required",
+            "declined_ai"
+        ])
+    );
+}
+
+#[test]
+fn native_phase_tool_adds_explicit_safety_categories_without_changing_the_legacy_profile() {
+    use voice_agent::contract::MenuNavigation;
+    use voice_agent::observations::phase_tool_for;
+    let url = "https://voice.example.com/v1/functions/observe";
+    assert_eq!(
+        phase_tool_for(url, MenuNavigation::SpokenOnly),
+        phase_tool(url)
+    );
+    let native = phase_tool_for(url, MenuNavigation::ModelGuidedPublicMenu);
+    assert_eq!(
+        native["parameters"]["properties"]["phase"]["enum"],
+        json!([
+            "ivr",
+            "hold",
+            "talking",
+            "authentication_required",
+            "dtmf_required",
+            "declined_ai",
+            "uncertain_menu",
+            "prohibited_action"
+        ])
+    );
+    assert_eq!(native["args_at_root"], true);
+    assert_eq!(native["max_retry"], 0);
+    assert_eq!(native["speak_during_execution"], false);
+    assert_eq!(native["speak_after_execution"], false);
+    assert_eq!(native["parameters"]["additionalProperties"], false);
+    assert_eq!(
+        native["parameters"]["properties"]
+            .as_object()
+            .unwrap()
+            .len(),
+        5
+    );
 }
 
 /// Current operational reports have a narrow vocabulary and cannot assert human authentication.
@@ -152,6 +200,11 @@ fn only_declared_phase_names_are_accepted(tc: TestCase) {
                 "authentication_required",
                 "dtmf_required",
                 "declined_ai",
+                "uncertain_menu",
+                "prohibited_action",
+                "uncertain",
+                "public_menu_approved",
+                "payment_authorized",
                 "human_connected",
                 "takeover",
                 "success",
@@ -167,6 +220,8 @@ fn only_declared_phase_names_are_accepted(tc: TestCase) {
         "authentication_required",
         "dtmf_required",
         "declined_ai",
+        "uncertain_menu",
+        "prohibited_action",
     ]
     .contains(&name.as_str());
     let mut value = payload();

@@ -1,10 +1,12 @@
 use hegel::prelude::*;
 use ring::hmac;
 use serde_json::{json, Value};
-use voice_agent::contract::{CallResult, EventKind, Intent, Lifecycle, Operation, ResultStatus};
+use voice_agent::contract::{
+    CallResult, EventKind, Intent, Lifecycle, MenuNavigation, Operation, ResultStatus,
+};
 use voice_agent::provider::{
-    build_retell_request, retell_llm_template, verify_and_normalize, CreateOutcome, Provider,
-    Simulation, SyntheticProvider,
+    build_retell_request, retell_llm_template, retell_llm_template_for, verify_and_normalize,
+    CreateOutcome, Provider, Simulation, SyntheticProvider,
 };
 
 fn operation() -> Operation {
@@ -514,4 +516,58 @@ fn a_late_stop_does_not_move_an_already_observed_end_time() {
         .find(|e| e.kind == EventKind::Ended)
         .unwrap();
     assert_eq!(ended.observed_at, 1003);
+}
+
+#[test]
+fn adding_native_menu_navigation_preserves_the_existing_restrictive_template() {
+    let old = retell_llm_template();
+    assert_eq!(
+        voice_agent::retell::snapshot_digest(&old).unwrap(),
+        "d3b9554536a071cd708822d15e6b979d6f97e2356e9af90b7db8a2dbc2095d6e"
+    );
+    assert_eq!(old, retell_llm_template_for(MenuNavigation::SpokenOnly));
+    let native = retell_llm_template_for(MenuNavigation::ModelGuidedPublicMenu);
+    let tool = &native["general_tools"][1];
+    assert_eq!(tool["type"], "press_digit");
+    assert_eq!(tool["name"], "press_public_menu_digit");
+    assert_eq!(tool["delay_ms"], 5000);
+    assert_eq!(tool.as_object().unwrap().len(), 4);
+    assert_eq!(native["general_tools"].as_array().unwrap().len(), 2);
+    let prompt = native["general_prompt"].as_str().unwrap();
+    for safety in [
+        "AI calling assistant",
+        "PUBLIC department menus only",
+        "Never enter identifiers",
+        "extensions",
+        "attest",
+        "consent",
+        "end without guessing",
+        "uncertain_menu",
+        "prohibited_action",
+        "not have an enforceable digit allowlist",
+    ] {
+        assert!(prompt.contains(safety), "{safety}");
+    }
+}
+
+#[test]
+fn the_native_menu_profile_is_bound_to_the_intent_digest_and_approved_task() {
+    let mut op = operation();
+    let previous = op.digest.clone();
+    op.intent.as_mut().unwrap().menu_navigation = MenuNavigation::ModelGuidedPublicMenu;
+    assert!(build_retell_request(&op, "+12025550199", 1000).is_err());
+    op.digest = op.intent.as_ref().unwrap().digest().unwrap();
+    assert_ne!(op.digest, previous);
+    let payload = build_retell_request(&op, "+12025550199", 1000).unwrap();
+    let task: Value = serde_json::from_str(
+        payload["retell_llm_dynamic_variables"]["approved_task"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(task["menu_navigation"], "model_guided_public_menu");
+    assert_eq!(payload["metadata"]["intent_digest"], op.digest);
+    assert!(payload["agent_override"]["retell_llm"]
+        .get("general_tools")
+        .is_none());
 }

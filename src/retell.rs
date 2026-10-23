@@ -1,9 +1,9 @@
 //! Retell HTTPS transport. Constructors do not contact the vendor.
 //! A submitted create is never retried; lookup and stop are separate operations.
-use crate::contract::{hash, identifier, us_number, Event, Operation};
+use crate::contract::{hash, identifier, us_number, Event, MenuNavigation, Operation};
 use crate::provider::{
-    build_retell_request, normalize_authenticated_call_event, retell_llm_template, CreateOutcome,
-    Provider, ProviderLookup,
+    build_retell_request, normalize_authenticated_call_event, retell_llm_template_for,
+    CreateOutcome, Provider, ProviderLookup,
 };
 use crate::{Error, Result};
 use reqwest::blocking::Client;
@@ -35,6 +35,8 @@ pub struct RetellConfig {
     pub agent_snapshot_sha256: String,
     pub llm_snapshot_sha256: String,
     pub webhook_url: Option<String>,
+    #[serde(default)]
+    pub menu_navigation: MenuNavigation,
 }
 
 fn path_identifier(value: &str) -> bool {
@@ -56,9 +58,25 @@ impl RetellConfig {
         {
             return Err(Error::new("invalid_retell_configuration", 4));
         }
+        if self.menu_navigation == MenuNavigation::ModelGuidedPublicMenu
+            && self.webhook_url.is_none()
+        {
+            return Err(Error::new("native_menu_requires_signed_observations", 4));
+        }
         if let Some(value) = &self.webhook_url {
             let url = Url::parse(value).map_err(|_| Error::new("invalid_retell_webhook_url", 4))?;
-            if url.scheme() != "https"
+            let native_host_invalid = self.menu_navigation == MenuNavigation::ModelGuidedPublicMenu
+                && !url.host_str().is_some_and(|host| {
+                    let host = host.trim_end_matches('.');
+                    host.contains('.')
+                        && host != "localhost"
+                        && !host.ends_with(".localhost")
+                        && !host.ends_with(".local")
+                        && !host.ends_with(".internal")
+                        && host.trim_matches(['[', ']']).parse::<IpAddr>().is_err()
+                });
+            if native_host_invalid
+                || url.scheme() != "https"
                 || url.host_str().is_none()
                 || !url.username().is_empty()
                 || url.password().is_some()
@@ -107,7 +125,7 @@ impl RetellConfig {
         {
             return Err(Error::new("retell_unsafe_agent_configuration", 4));
         }
-        let template = retell_llm_template();
+        let template = retell_llm_template_for(self.menu_navigation);
         let mut tools = template["general_tools"]
             .as_array()
             .expect("static template tools")
@@ -116,7 +134,10 @@ impl RetellConfig {
             let mut phase_url =
                 Url::parse(url).map_err(|_| Error::new("invalid_retell_webhook_url", 4))?;
             phase_url.set_path("/v1/functions/observe");
-            tools.push(crate::observations::phase_tool(phase_url.as_str()));
+            tools.push(crate::observations::phase_tool_for(
+                phase_url.as_str(),
+                self.menu_navigation,
+            ));
             phase_url.set_path("/v1/functions/report");
             tools.push(crate::observations::report_tool(phase_url.as_str()));
         }
@@ -443,6 +464,7 @@ impl RetellProvider {
             || op.all_legs_ended
             || intent.agent_id != self.config.agent_id
             || intent.agent_version != self.config.agent_version
+            || intent.menu_navigation != self.config.menu_navigation
         {
             return CreateOutcome::Rejected;
         }
@@ -485,6 +507,9 @@ impl RetellProvider {
         };
         body["agent_override"]["agent"]["max_call_duration_ms"] =
             json!(u64::from(send_duration) * 1000);
+        if intent.menu_navigation != self.config.menu_navigation {
+            return CreateOutcome::Rejected;
+        }
         let Ok((status, bytes)) = self.send(Method::POST, "/v2/create-phone-call", Some(&body))
         else {
             return CreateOutcome::Unknown;
