@@ -39,7 +39,11 @@ The event inbox stores authenticated minimal observations before acknowledgement
 Operation binding and inbox insertion are atomic. Processing and versioned outbox
 insertion share a transaction. Duplicate provider event identities do not mint result
 versions. Reordered starts cannot reverse normal terminal state. Contradictory provider
-evidence and unknown transfer legs disable starts and retain uncertainty.
+evidence and unknown transfer legs disable starts and retain uncertainty. Rejected
+lookup observations retain the known call mapping, record only a fixed diagnostic
+code and time, and cannot prevent current or later operations from requesting a stop.
+The worker reports that diagnostic after its safety pass; storage failures remain
+fail-fast.
 
 Stops are repeat-safe requests against a known call ID. A receipt is not proof of
 termination. Duration, hold and handoff deadlines run in the controller worker.

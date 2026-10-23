@@ -61,16 +61,24 @@ Logical deletion does not certify physical deletion from SQLite WAL or backups.
 
 ## Final verification
 
-The complete suite passed from the requested project folder: 102 checks, including
-26 Hegel properties at 5,000 cases each (130,000 generated cases), 38 controller
+The final automatic contract run tested 123 mutations: all 123 were caught, with
+zero survivors, zero unbuildable mutants and zero timeouts. The earlier 32 survivors
+were inspected and covered with independent validation, boundary and transition
+assertions; no mutation was excluded to improve the count. This run targets the
+unchanged contract source. The subsequent lookup-rejection controller fix has its
+own seeded fault and full-suite regression validation.
+
+The complete suite passed from the requested project folder: 103 checks, including
+26 Hegel properties at 5,000 cases each (130,000 generated cases), 39 controller
 regressions, 14 ordinary contract checks, 17 ordinary provider checks and seven CLI
 process integrations. Formatting and Clippy with warnings denied also passed.
 
-All six separately seeded safety mutations were caught by regression assertions:
+All seven separately seeded safety mutations were caught by regression assertions:
 approval digest bypass, duplicate dispatch after ambiguity, conflicting-event
-suppression, premature reservation release, stale cost overwrite and missing
-incident correction. None survived, failed to compile or timed out. These seeded
-faults supplement the automatically generated contract mutations.
+suppression, premature reservation release, stale cost overwrite, missing incident
+correction, and rejected observations starving safety stops. None survived, failed
+to compile or timed out. These seeded faults supplement the automatically generated
+contract mutations.
 
 Run heavy verification jobs sequentially on a development machine:
 
@@ -88,3 +96,9 @@ The mutation harness always uses scratch copies and checks an unmodified baselin
 The lower property case count makes mutation feedback practical; the unmodified
 release suite uses 5,000 cases. Assertions and supported input ranges are unchanged.
 No mutation score establishes correctness beyond the tested faults and distributions.
+
+Publication checks used Gitleaks 8.30.1 and the project privacy tripwire against
+candidate files and Git history. Cargo metadata reported license expressions for
+all 173 resolved packages; the review found permissive licensing options throughout.
+The repository contains synthetic fixtures and authored source, not private input
+specifications, transcripts, recovery archives or personal workflow records.

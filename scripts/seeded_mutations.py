@@ -11,6 +11,8 @@ root = Path(__file__).resolve().parents[1]
 output = root/"target/seeded-mutations"
 output.mkdir(parents=True, exist_ok=True)
 mutations = [
+    ("rejected_observation_starves_stops", "src/controller.rs",
+     "observation_rejection.get_or_insert(error);", "return Err(error);"),
     ("approval_digest_bypass", "src/controller.rs",
      "|| a.digest != digest", "|| false"),
     ("duplicate_dispatch_after_ambiguity", "src/controller.rs",

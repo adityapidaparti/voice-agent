@@ -42,6 +42,7 @@ impl Store {
             reservation INTEGER NOT NULL, data TEXT NOT NULL, UNIQUE(owner,idem));
           DROP INDEX IF EXISTS one_active_owner;
           CREATE TABLE IF NOT EXISTS events(key TEXT PRIMARY KEY, operation_id TEXT NOT NULL, data TEXT NOT NULL, processed INTEGER NOT NULL DEFAULT 0);
+          CREATE TABLE IF NOT EXISTS incidents(key TEXT PRIMARY KEY, operation_id TEXT NOT NULL, code TEXT NOT NULL, observed_at INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS outbox(operation_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(operation_id,version));
           CREATE TABLE IF NOT EXISTS gates(reference TEXT PRIMARY KEY, version TEXT NOT NULL, expires INTEGER NOT NULL, allowed INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value INTEGER NOT NULL);

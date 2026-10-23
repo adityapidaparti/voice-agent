@@ -59,6 +59,7 @@ cargo clippy --locked --all-targets -- -D warnings
 python3 scripts/privacy_scan.py
 ```
 
-First fetch dependencies with `cargo fetch --locked`. Hegel builds a native engine
-with a nested Cargo invocation; `CARGO_NET_OFFLINE=true` propagates offline mode
-after the engine dependencies have been cached. CI builds online on a fresh runner.
+On a fresh machine, run `cargo test --locked` online once. Hegel builds a native
+engine with a nested Cargo invocation; `cargo fetch --locked` alone may not fill
+that engine cache. Use `CARGO_NET_OFFLINE=true` after both dependency sets are cached.
+CI builds online on a fresh runner.

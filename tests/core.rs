@@ -998,3 +998,203 @@ fn ivr_stopping_reason_and_an_ordinary_end_cannot_clear_event_uncertainty() {
     assert_eq!(uncertain.lifecycle, Lifecycle::Ending);
     assert_eq!(uncertain.result.status, ResultStatus::NeedsReview);
 }
+
+#[test]
+fn rejected_lookup_observations_cannot_starve_stops_for_any_active_owner() {
+    use voice_agent::provider::{CreateOutcome, Provider};
+
+    #[derive(Default)]
+    struct ScriptedProvider {
+        creates: Vec<(String, String)>,
+        lookups: Vec<(String, i64)>,
+        stops: Vec<(String, String, i64)>,
+        rejected: Option<Event>,
+    }
+    impl Provider for ScriptedProvider {
+        fn create(&mut self, op: &Operation, _: i64) -> CreateOutcome {
+            let call_id = format!("call_{}", op.id);
+            self.creates.push((op.id.clone(), call_id.clone()));
+            CreateOutcome::Accepted(call_id)
+        }
+        fn lookup(&mut self, op: &Operation, now: i64) -> voice_agent::Result<Vec<Event>> {
+            self.lookups.push((op.id.clone(), now));
+            Ok(self
+                .rejected
+                .iter()
+                .filter(|e| e.operation_id == op.id)
+                .cloned()
+                .collect())
+        }
+        fn stop(&mut self, op: &Operation, now: i64) -> voice_agent::Result<()> {
+            self.stops.push((
+                op.id.clone(),
+                op.call_id.clone().expect("stop must use the known call"),
+                now,
+            ));
+            Ok(())
+        }
+    }
+
+    for rejection in [
+        "invalid_event_envelope",
+        "event_mapping_conflict",
+        "event_identity_conflict",
+    ] {
+        let d = tempfile::tempdir().unwrap();
+        let db = d.path().join("state.db");
+        let mut c = Controller::open(&db).unwrap();
+        let revoked_owner = user();
+        let expired_owner = Principal {
+            owner: "other-synthetic-owner".into(),
+            role: Role::User,
+        };
+        let mut longer = intent();
+        longer.limits.duration_seconds = 600;
+        longer.limits.budget_cents = 200;
+        let shorter = intent();
+        let revoked_approval = c.approve(&revoked_owner, &longer, 1000).unwrap();
+        let expired_approval = c.approve(&expired_owner, &shorter, 1000).unwrap();
+        let revoked_op = c
+            .start(
+                &revoked_owner,
+                &longer,
+                &revoked_approval.id,
+                "rejected_lookup",
+                1000,
+            )
+            .unwrap();
+        let expired_op = c
+            .start(
+                &expired_owner,
+                &shorter,
+                &expired_approval.id,
+                "other_call",
+                1000,
+            )
+            .unwrap();
+        let mut p = ScriptedProvider::default();
+        c.tick(&mut p, 1000).unwrap();
+        assert_eq!(p.creates.len(), 2);
+        let revoked_op = c.get(&revoked_owner, &revoked_op.id).unwrap();
+        let expired_op = c.get(&expired_owner, &expired_op.id).unwrap();
+        let expected_bindings: BTreeSet<_> = [&revoked_op, &expired_op]
+            .into_iter()
+            .map(|op| (op.id.clone(), op.call_id.clone().unwrap()))
+            .collect();
+        assert_ne!(revoked_op.call_id, expired_op.call_id);
+        let original = event(&revoked_op, EventKind::Started, 1001);
+        deliver(&mut c, original.clone()).unwrap();
+        let mut rejected = original;
+        match rejection {
+            "invalid_event_envelope" => rejected.key.clear(),
+            "event_mapping_conflict" => rejected.call_id = "foreign_call".into(),
+            "event_identity_conflict" => {
+                rejected.kind = EventKind::Ended;
+                rejected.all_legs_ended = true;
+            }
+            _ => unreachable!(),
+        }
+        p.rejected = Some(rejected);
+        c.revoke(&revoked_owner, &revoked_approval.id, 1002)
+            .unwrap();
+        let before = c.get(&revoked_owner, &revoked_op.id).unwrap();
+        assert!(c.pending_outbox().unwrap().is_empty());
+        let mut correction_version = None;
+
+        // One call is revoked before its duration expires; the other reaches its
+        // deadline. A rejected observation must not abort either safety action.
+        for at in [expired_op.deadline, expired_op.deadline + 1] {
+            assert!(at < revoked_op.deadline);
+            assert_eq!(c.tick(&mut p, at).unwrap_err().code, rejection);
+            let stopped: BTreeSet<_> = p
+                .stops
+                .iter()
+                .filter(|(_, _, time)| *time == at)
+                .map(|(operation, call, _)| (operation.clone(), call.clone()))
+                .collect();
+            assert_eq!(stopped, expected_bindings, "rejection: {rejection}");
+            let looked_up: BTreeSet<_> = p
+                .lookups
+                .iter()
+                .filter(|(_, time)| *time == at)
+                .map(|(operation, _)| operation.clone())
+                .collect();
+            assert_eq!(looked_up.len(), 2, "rejection: {rejection}");
+            assert_eq!(p.creates.len(), 2);
+            for (owner, original) in [(&revoked_owner, &revoked_op), (&expired_owner, &expired_op)]
+            {
+                let current = c.get(owner, &original.id).unwrap();
+                assert_eq!(current.call_id, original.call_id);
+                assert_eq!(current.lifecycle, Lifecycle::Ending);
+                assert!(current.locked());
+                assert!(!current.all_legs_ended);
+            }
+
+            let quarantined = c.get(&revoked_owner, &revoked_op.id).unwrap();
+            assert_eq!(quarantined.result.status, ResultStatus::NeedsReview);
+            assert_eq!(quarantined.result.outcome, "provider_observation_rejected");
+            assert_eq!(quarantined.result.human_result, "unobserved");
+            assert!(!quarantined.result.next_action.is_empty());
+            let incident_refs: Vec<_> = quarantined
+                .result
+                .evidence_refs
+                .iter()
+                .filter(|reference| reference.starts_with("incident_"))
+                .collect();
+            assert_eq!(incident_refs.len(), 1);
+            assert_eq!(
+                quarantined.result.evidence_refs.len(),
+                before.result.evidence_refs.len() + 1
+            );
+            assert!(quarantined.result.result_version > before.result.result_version);
+            if let Some(version) = correction_version {
+                assert_eq!(quarantined.result.result_version, version);
+            } else {
+                correction_version = Some(quarantined.result.result_version);
+            }
+            let outbox = c.pending_outbox().unwrap();
+            assert_eq!(outbox.len(), 1);
+            assert_eq!(outbox[0].operation_id, revoked_op.id);
+            assert_eq!(outbox[0].result_version, quarantined.result.result_version);
+            assert_eq!(outbox[0].result.status, ResultStatus::NeedsReview);
+            assert_eq!(outbox[0].result.outcome, "provider_observation_rejected");
+
+            // The rejection record contains a digest and safe metadata, never the
+            // rejected envelope. Identical delivery after restart is one incident.
+            let diagnostics = rusqlite::Connection::open(&db).unwrap();
+            let mut fields = diagnostics.prepare("PRAGMA table_info(incidents)").unwrap();
+            let columns: BTreeSet<String> = fields
+                .query_map([], |row| row.get(1))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            assert_eq!(
+                columns,
+                ["key", "operation_id", "code", "observed_at"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect()
+            );
+            let count: u32 = diagnostics
+                .query_row("SELECT COUNT(*) FROM incidents", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 1);
+            let (key, operation_id, code): (String, String, String) = diagnostics
+                .query_row("SELECT key,operation_id,code FROM incidents", [], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })
+                .unwrap();
+            assert_eq!(&key, incident_refs[0]);
+            assert_eq!(operation_id, revoked_op.id);
+            assert_eq!(code, rejection);
+            drop(fields);
+            drop(diagnostics);
+            drop(c);
+            c = Controller::open(&db).unwrap();
+        }
+        assert_eq!(
+            c.set_starts_enabled(true).unwrap_err().code,
+            "safety_incident_requires_resolution"
+        );
+    }
+}

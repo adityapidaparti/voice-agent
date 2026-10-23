@@ -513,8 +513,44 @@ impl Controller {
         tx.commit()?;
         Ok(())
     }
+    fn record_observation_rejection(&mut self, id: &str, code: &str, now: i64) -> Result<()> {
+        let tx = self
+            .store
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let key = format!("incident_{}", hash(format!("{id}\0{code}").as_bytes()));
+        let inserted = tx.execute(
+            "INSERT OR IGNORE INTO incidents VALUES(?1,?2,?3,?4)",
+            params![key, id, code, now],
+        )?;
+        if inserted != 0 {
+            let mut op = store::operation(&tx, id)?;
+            if op.locked() {
+                op.stop_reason
+                    .get_or_insert("provider_observation_rejected".into());
+                op.lifecycle = Lifecycle::Ending;
+            }
+            op.result.status = ResultStatus::NeedsReview;
+            op.result.outcome = "provider_observation_rejected".into();
+            op.result.next_action = format!(
+                "Resolve rejected provider observation ({code}) before another call; preserve the existing call identity"
+            );
+            op.result.result_version += 1;
+            op.result.evidence_refs.push(key);
+            store::save_operation(&tx, &op)?;
+            publish_result(&tx, &op)?;
+        }
+        tx.execute("UPDATE settings SET value=0 WHERE key='starts_enabled'", [])?;
+        tx.execute(
+            "UPDATE settings SET value=1 WHERE key='safety_incident'",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
     pub fn tick(&mut self, provider: &mut dyn Provider, now: i64) -> Result<()> {
         self.process_events()?;
+        let mut observation_rejection = None;
         let mut stmt = self.store.db.prepare("SELECT id FROM operations")?;
         let ids = stmt
             .query_map([], |r| r.get::<_, String>(0))?
@@ -638,11 +674,25 @@ impl Controller {
                 // Safe reads only. Empty or failed lookup never releases a reservation.
                 if let Ok(events) = provider.lookup(&op, now) {
                     for e in events {
-                        if let Err(error) = self.ingest(e) {
-                            // Payload conflicts are already durably quarantined. Their
-                            // repeated delivery must not starve stop/deadline enforcement.
-                            if error.code != "event_payload_conflict" {
-                                return Err(error);
+                        let observation = if e.operation_id != id {
+                            Err(Error::new("event_mapping_conflict", 4))
+                        } else {
+                            self.ingest(e)
+                        };
+                        if let Err(error) = observation {
+                            match error.code {
+                                // Already durably quarantined; replay cannot starve stops.
+                                "event_payload_conflict" => {}
+                                "invalid_event_envelope"
+                                | "event_mapping_conflict"
+                                | "event_identity_conflict" => {
+                                    // Reject only the observation. Persist a minimal diagnostic
+                                    // against the polled operation, then service every safety stop.
+                                    self.record_observation_rejection(&id, error.code, now)?;
+                                    observation_rejection.get_or_insert(error);
+                                }
+                                // Corrupt storage and infrastructure errors are not observations.
+                                _ => return Err(error),
                             }
                         }
                     }
@@ -687,7 +737,10 @@ impl Controller {
             }
         }
         tx.commit()?;
-        Ok(())
+        match observation_rejection {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
     pub fn pending_outbox(&self) -> Result<Vec<Writeback>> {
         let mut stmt = self
