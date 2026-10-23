@@ -44,6 +44,11 @@ impl Store {
           CREATE TABLE IF NOT EXISTS events(key TEXT PRIMARY KEY, operation_id TEXT NOT NULL, data TEXT NOT NULL, processed INTEGER NOT NULL DEFAULT 0);
           CREATE TABLE IF NOT EXISTS incidents(key TEXT PRIMARY KEY, operation_id TEXT NOT NULL, code TEXT NOT NULL, observed_at INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS outbox(operation_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(operation_id,version));
+          CREATE TABLE IF NOT EXISTS environment(name TEXT PRIMARY KEY);
+          CREATE TABLE IF NOT EXISTS operation_scopes(operation_id TEXT PRIMARY KEY, scope TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS report_observations(operation_id TEXT NOT NULL, sequence INTEGER NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(operation_id,sequence));
+          CREATE TABLE IF NOT EXISTS phase_observations(operation_id TEXT NOT NULL, sequence INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(operation_id,sequence));
+          CREATE TABLE IF NOT EXISTS authority_reservations(operation_id TEXT PRIMARY KEY, reservation_id TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS gates(reference TEXT PRIMARY KEY, version TEXT NOT NULL, expires INTEGER NOT NULL, allowed INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value INTEGER NOT NULL);
           INSERT OR IGNORE INTO gates VALUES('gate_demo_v1','v1',9223372036854775807,1);
@@ -51,6 +56,48 @@ impl Store {
           INSERT OR IGNORE INTO settings VALUES('safety_incident',0);
         ")?;
         Ok(Self { db })
+    }
+    pub fn open_bound(path: impl AsRef<Path>, environment: &str) -> Result<Self> {
+        let mut store = Self::open(path)?;
+        let tx = store
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let current: Option<String> = tx
+            .query_row("SELECT name FROM environment LIMIT 1", [], |r| r.get(0))
+            .optional()?;
+        if let Some(current) = current {
+            if current != environment {
+                return Err(Error::new("database_environment_mismatch", 4));
+            }
+        } else {
+            let used: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM approvals) OR EXISTS(SELECT 1 FROM operations)",
+                [],
+                |r| r.get(0),
+            )?;
+            if used && environment != "simulation" {
+                return Err(Error::new("database_environment_mismatch", 4));
+            }
+            tx.execute("INSERT INTO environment VALUES(?1)", [environment])?;
+        }
+        // Backfill scope for recoverable legacy synthetic operations.
+        let mut stmt=tx.prepare("SELECT id,data FROM operations WHERE id NOT IN (SELECT operation_id FROM operation_scopes)")?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        drop(stmt);
+        for (id, data) in rows {
+            let op: Operation = serde_json::from_str(&data)?;
+            let work = &op.result.work_item;
+            let scope =
+                crate::contract::hash(&serde_json::to_vec(&(&work.system, &work.reference))?);
+            tx.execute(
+                "INSERT INTO operation_scopes VALUES(?1,?2)",
+                params![id, scope],
+            )?;
+        }
+        tx.commit()?;
+        Ok(store)
     }
 }
 pub(crate) fn operation(db: &Connection, id: &str) -> Result<Operation> {

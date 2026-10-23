@@ -1,0 +1,24 @@
+# Replace this reserved example hostname only after hosting/DNS/TLS is authorized.
+{
+    servers {
+        timeouts {
+            read_header 5s
+            read_body 10s
+            write 20s
+            idle 30s
+        }
+        max_header_size 16KB
+    }
+}
+voice.example.invalid {
+    request_body {
+        max_size 64KB
+    }
+    # No access log: never log Authorization, Retell signatures or request bodies.
+    reverse_proxy 127.0.0.1:8787 {
+        transport http {
+            dial_timeout 2s
+            response_header_timeout 15s
+        }
+    }
+}

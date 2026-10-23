@@ -1,23 +1,36 @@
-# Release gates
+# Activation and acceptance gates
 
-Public source availability is not a deployment or calling approval. No real credential,
-account, number, paid service, hosted deployment or phone call was used in this build.
+Public source and a configurable transport do not authorize calls or expenditure.
+This build used only synthetic facts, fake HTTP peers and reserved example numbers.
+No account, real credential, number, hosted service or real call was used.
 
-| Gate | Current evidence | Still required before live calling |
+| Gate | Implemented and tested offline | External acceptance still required |
 |---|---|---|
-| Scope and approval | Typed snapshot/digest, user/coordinator tests | Real authenticated user session, secure approval presentation and scopes |
-| Durable start | Transactional reservation; crash/restart and concurrency tests | Hosted durable database, backups, monitored worker-health admission |
-| Retell | Request builder and signature normalization against primary schema | Authorized account/funding/KYC, number, live transport and pinned published agent verification |
-| Unknown outcome | Read-only reconciliation; no automatic create retries | Controlled response-loss test and provider history correlation |
-| Limits | Synthetic rate reservation and durable stop/deadline logic | Current full rate model, approved exposure, all-leg billing/stop measurements |
-| IVR / hold / audio | State-machine menu and hold timers | DTMF tool verification, ten-minute silent hold, loop detection and measured latency/interruption |
-| Human boundary | Manual fallback; no AI resume; human result unknown | Tested private user end control, takeover identity/microphone/closure behavior |
-| Authentication | Separate direct call required | Independent proof of no AI processing, transcription or capture in sensitive segment |
-| Transfer | Unsupported legs quarantine calling | Control and cost enforcement for every carrier leg before allowing transfer |
-| Privacy / consent | Synthetic tests; no raw media persistence | Geography, consent, lawful calling/processing decisions, storage and deletion acceptance |
-| Canonical workflow | Versioned outbox plus consumer contract | Inspect actual canonical RP contract; fresh policy reservation; real consumer concurrency tests |
-| Offline operation | Controller subprocess outlives CLI clients | Approved hosted deployment and actual laptop-sleep test |
+| Approval/control | Scope digest, owner/role checks, hashed expiring credentials, revocation, HTTPS CLI | Provision separate human/coordinator access; privately review the actual recipient, purpose, facts, window and budget |
+| Durable runtime | SQLite environment separation, reservations, restart recovery, stop-first worker and independent outbox worker | Authorized always-on host, TLS, private persistent storage, backups, recovery, monitoring and laptop-sleep test |
+| Retell | HTTPS create/get/list/stop, exact published agent/LLM pins, bounded transport, no create retries | Authorized account, terms, outbound KYC, number, scoped key, approved published agent, funding and actual provider acceptance |
+| Canonical RP | Generic HTTP authority/reservation and conditional writeback adapter; independent fake peer | Actual RP service must implement/approve this protocol, grant access and validate reservation, revocation and corrective-result semantics |
+| Limits | Complete configured rate reference, daily/call reservations, absolute deadline and dispatch lease | Current all-in pricing, explicit spend approval, measured ringing/stop delay and all-leg billing; no claim of an exact hard dollar cap |
+| IVR/hold | Signed bounded phase observations; menu/hold timers; spoken menu instructions | Own-number test, silent hold/audio behavior and latency; model phase classification is not guaranteed |
+| DTMF | Bounded menu-plan contract; unbounded native tool rejected | Deterministic DTMF requires a separately reviewed custom-LLM path; current hosted LLM stops for direct human follow-up |
+| Human boundary | AI disclosure; no impersonation; stop on authentication/refusal; no transfer tool | Test user stop control and refusal handling. Sensitive verification remains in a separate direct call |
+| Result capture | Lifecycle/cost evidence plus signed categorical answers marked unverified; versioned canonical outbox | Compare own-number test observations with reality; canonical RP decides business meaning. Basic Attributes Only does not retain a later-fetchable transcript |
+| Privacy/legal | Args-only callbacks, no raw transcript/media retention, private runtime files | Applicable calling/consent review, provider terms, encrypted host/storage/backup retention and verified deletion |
 
-No runtime flag enables production calling. A future reviewed live adapter must pass
-these gates before making its first explicitly authorized call. Do not use the demo
-tokens, directory, rates or synthetic policy gate in a public deployment.
+Activation order: (1) approve account/number/budget/host/access setup;
+(2) connect the actual canonical RP authority and result sink;
+(3) review the complete nonsecret configuration and published-agent pins;
+(4) authorize a synthetic test call to the user's own verified number with explicit
+cost/time bounds; (5) verify stop, response-loss reconciliation, result capture and
+laptop independence; (6) separately approve the specific Amex recipient/purpose/facts
+and cost envelope. The source build does not perform these actions.
+
+`voice config-check` validates configuration without secrets or network. Only
+`voice serve --config ... --enable-live-calling` loads explicitly named runtime
+credentials; `starts_enabled` and a fresh user approval are still required.
+Do not use demonstration tokens, contacts, rates or gates in a live deployment.
+
+Retell processes audio even with Basic Attributes Only. The absence of retained
+recordings is not proof that sensitive authentication is isolated. Do not transmit
+payment-card data, financial account identifiers, SSNs, OTPs, PINs or passwords.
+Transfer and same-call authentication cannot be enabled by an intent.

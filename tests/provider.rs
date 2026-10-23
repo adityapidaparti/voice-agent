@@ -54,6 +54,7 @@ fn operation() -> Operation {
             next_action: "wait".into(),
             actual_cost_cents: None,
             estimated_cost_cents: 20,
+            reported_answers: vec![],
         },
         intent: Some(intent),
     }

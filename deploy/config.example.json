@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "starts_enabled": false,
+  "public_origin": "https://voice.example.invalid",
+  "listen": "127.0.0.1:8787",
+  "database": "/var/lib/voice-agent/controller.db",
+  "credentials_file": "/etc/voice-agent/credentials.json",
+  "retell_key_env": "VOICE_RETELL_API_KEY",
+  "workflow_token_env": "VOICE_WORKFLOW_TOKEN",
+  "workflow_base_url": "https://workflow.example.invalid",
+  "policy": {
+    "daily_budget_cents": 100,
+    "directory": [
+      {
+        "work_system": "return_protection",
+        "destination": {
+          "e164": "+12025550100",
+          "source_ref": "synthetic_directory",
+          "source_version": "v1"
+        },
+        "agent_id": "agent_example",
+        "agent_version": 1,
+        "rate_ref": "synthetic_rate",
+        "rate_cents_per_minute": 10,
+        "handoff_recipient_ref": "owner",
+        "handoff_endpoint_ref": "owner_control",
+        "consent_policy_ref": "synthetic_consent",
+        "expires_at": 0
+      }
+    ]
+  },
+  "retell": {
+    "from_number": "+12025550101",
+    "agent_id": "agent_example",
+    "agent_version": 1,
+    "llm_id": "llm_example",
+    "llm_version": 1,
+    "agent_snapshot_sha256": "REPLACE_WITH_REVIEWED_AGENT_SNAPSHOT_DIGEST",
+    "llm_snapshot_sha256": "REPLACE_WITH_REVIEWED_LLM_SNAPSHOT_DIGEST",
+    "webhook_url": "https://voice.example.invalid/v1/webhooks/retell"
+  }
+}

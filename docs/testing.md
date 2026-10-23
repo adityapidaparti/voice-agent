@@ -59,16 +59,16 @@ without inheriting the test suite.
 
 Logical deletion does not certify physical deletion from SQLite WAL or backups.
 
-## Final verification
+## Offline reference baseline verification
 
 The final automatic contract run tested 123 mutations: all 123 were caught, with
 zero survivors, zero unbuildable mutants and zero timeouts. The earlier 32 survivors
 were inspected and covered with independent validation, boundary and transition
-assertions; no mutation was excluded to improve the count. This run targets the
-unchanged contract source. The subsequent lookup-rejection controller fix has its
+assertions; no mutation was excluded to improve the count. This run targeted the baseline
+contract source before hosted integration. The subsequent lookup-rejection controller fix has its
 own seeded fault and full-suite regression validation.
 
-The complete suite passed from the requested project folder: 103 checks, including
+The baseline suite passed from the requested project folder: 103 checks, including
 26 Hegel properties at 5,000 cases each (130,000 generated cases), 39 controller
 regressions, 14 ordinary contract checks, 17 ordinary provider checks and seven CLI
 process integrations. Formatting and Clippy with warnings denied also passed.
@@ -102,3 +102,56 @@ candidate files and Git history. Cargo metadata reported license expressions for
 all 173 resolved packages; the review found permissive licensing options throughout.
 The repository contains synthetic fixtures and authored source, not private input
 specifications, transcripts, recovery archives or personal workflow records.
+
+## Hosted integration verification
+
+Hosted adapter examples use independent loopback peers for exact requests, pin
+mismatch, malformed or excessive responses, redirects, ambiguous create outcomes,
+pagination conflicts, delayed configuration reads and stopped-call reconciliation.
+Authority tests cover all stages, durable reservations, database environment binding,
+revocation during an unlocked network request, delayed lease/approval expiry,
+cross-owner canonical work-item locking, unbound callback rejection and stop
+priority over rejected history. Args-only phase/answer reports have closed schemas,
+independent signature vectors and full-range clock/scope properties.
+
+The final integrated suite passed 188 tests, including 43 Hegel properties
+configured for 5,000 cases each. The composition test runs independent fake Retell
+and RP servers through approval, reservation, a lost create receipt, delayed call
+visibility, restart, signed categorical observations, revocation, stop receipts,
+terminal evidence and lost writeback acknowledgements. It verifies that newer
+canonical corrections survive replay of an older result. It uses a synthetic HTTP
+500 for the uncertain create response, not a real provider or physical network cut.
+
+Three scheduling examples and a generated history/active-state property bound
+background lookups and verify fair rotation, active-call priority and admission
+during a background request. The oracle counts network operations, without sleeps
+or fabricated database rows. Source review identified this delay class before
+release; the worker now limits historical reconciliation to one call per tick and
+defers it while any operation is active.
+
+The first hosted mutation run caught 14 of 15 faults. The survivor omitted the
+credential secret comparison: previous wrong-secret examples failed format or ID
+checks first. Tests now include valid-format secret substitutions for known IDs,
+arbitrary payloads and generated single-position changes. The survivor was caught
+on a focused rerun with a passing unmodified baseline. No assertion or supported
+generator domain was weakened. The baseline contract score above is not a score
+for newly added hosted code. None of these tests is live-provider evidence.
+
+Two further faults removed the historical-read cap and active-call deferral. Both
+were caught by the scheduling regressions on the final controller, after a passing
+unmodified baseline. Across the original run and focused reruns, all 17 hosted
+faults have been caught; none remains a known survivor, and none produced a compile
+or infrastructure failure or a timeout. This is a targeted fault set, not an
+exhaustive automatic mutation score for the entire runtime.
+
+Run the hosted faults serially with `python3 scripts/hosted_mutations.py`.
+Use `--fault NAME` for a focused triage rerun; selected results are kept separately
+from the original run. The harness distinguishes caught, survived, compile or
+infrastructure failure, and timeout, and fails if any fault is not caught.
+
+Final local formatting, Clippy across all targets with warnings denied, and the
+synthetic CLI demo passed. The demo verifies duplicate-start recovery and completion
+after submitting clients exit. Publication scans covered all 48 staged candidate
+files and every reachable Git blob; Gitleaks found no leaks. The unchanged resolved
+dependency set contains 173 packages with permissive licensing options. Deployment
+templates were reviewed as source, not installed or accepted on a real host.

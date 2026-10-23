@@ -116,6 +116,7 @@ pub fn operation() -> Operation {
             next_action: "Wait for observations".into(),
             actual_cost_cents: None,
             estimated_cost_cents: intent.estimate_cents(),
+            reported_answers: vec![],
         },
         intent: Some(intent),
     }

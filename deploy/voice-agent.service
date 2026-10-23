@@ -1,0 +1,34 @@
+[Unit]
+Description=Approval-bound voice controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=voice-agent
+Group=voice-agent
+WorkingDirectory=/var/lib/voice-agent
+ExecStart=/usr/local/bin/voice serve --config /etc/voice-agent/config.json --enable-live-calling
+EnvironmentFile=/etc/voice-agent/runtime.env
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+UMask=0077
+StateDirectory=voice-agent
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/voice-agent
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

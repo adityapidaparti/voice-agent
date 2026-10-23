@@ -5,8 +5,12 @@ description: Operate the approval-bound voice CLI for bounded calling tasks.
 
 # Voice CLI
 
-Read README and run `voice doctor` first. This release is synthetic only.
-Do not load real provider credentials or use this demo to call a real recipient.
+Read README and run `voice doctor` first. The demo is synthetic. The configured
+Retell runtime requires the external setup and acceptance gates in
+`docs/release-gates.md`; the source-build workflow does not authorize credentials,
+deployment, expenditure or calls. Use the hosted route only after those specific
+authorizations and a synthetic own-number acceptance call. Never substitute demo
+contacts, tokens, rates or canonical workflow gates for approved configuration.
 
 1. Produce a minimal intent with a verified recipient reference, precise purpose,
    source-versioned approved facts, allowed actions and cost/time bounds.
@@ -17,8 +21,10 @@ Do not load real provider credentials or use this demo to call a real recipient.
 5. Inspect `status` and `result`. Pending is not final; ended is not objective completed.
    Unknown means reconcile the existing operation. Never change a key to force a retry.
 6. Use `end` for an authorized stop. Keep reporting ending until termination is observed.
-7. Feed operation/version and evidence into the canonical workflow. It owns all business
-   eligibility, policy and completion rules. Failed writeback never justifies redial.
+7. Inspect `status.canonical_writeback` for pending and acknowledged result versions.
+   The configured outbox writes to canonical RP; do not create a second claims ledger.
+   RP owns eligibility, policy and completion rules. Failed writeback never justifies
+   redial. Categorical reports are unverified model evidence, not confirmed facts.
 
 AI identity must be disclosed. Never impersonate the user or infer facts.
 Authentication, attestations, payments and scope changes go to the human.

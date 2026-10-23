@@ -128,13 +128,12 @@ fn simulation_and_loopback_are_required_before_opening_databases() {
 }
 
 #[test]
-fn remote_urls_credentials_in_urls_and_redirect_targets_are_not_allowed() {
+fn plaintext_remote_urls_credentials_in_urls_and_redirect_targets_are_not_allowed() {
     for base in [
         "http://example.com",
         "http://127.0.0.1@192.0.2.1",
         "http://name:seeded-secret@127.0.0.1:1",
         "http://127.0.0.1:1?token=seeded-secret",
-        "https://127.0.0.1:1",
         "http://localhost:1",
     ] {
         let output = voice(
@@ -322,4 +321,32 @@ fn http_auth_body_limits_and_webhook_failures_are_private() {
             assert!(!String::from_utf8_lossy(&bytes).contains("seeded-sensitive-transcript"));
         }
     }
+}
+
+#[test]
+fn https_control_is_accepted_but_requires_a_scoped_credential_before_network() {
+    let output = voice(
+        &[
+            "--controller",
+            "https://voice.example.invalid",
+            "status",
+            "op_example",
+        ],
+        None,
+    );
+    assert_eq!(output.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("controller_credential_required"));
+    let output = voice(
+        &[
+            "--controller",
+            "https://voice.example.invalid",
+            "status",
+            "op_example",
+        ],
+        Some("synthetic-owner-token"),
+    );
+    assert_eq!(output.status.code(), Some(3));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("invalid_controller_credential_format")
+    );
 }

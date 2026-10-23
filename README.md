@@ -3,10 +3,16 @@
 A small Rust calling controller with a thin `voice` CLI. Prepare a bounded
 task, approve its exact scope, submit once, and inspect the result later.
 
-**This release is an offline reference implementation.** It runs synthetic calls
-on a loopback controller. It cannot contact Retell or place a phone call.
-The Retell request and webhook boundary are implemented; production authentication,
-hosting, canonical workflow integration and controlled phone tests remain release gates.
+The synthetic demo works without accounts. A separately configured hosted runtime
+implements Retell create/lookup/stop, pinned published-agent checks, scoped user and
+coordinator authentication, signed minimal observations and canonical RP writeback.
+All provider verification during development uses fake HTTP peers. No live call,
+account, paid resource or deployment has been authorized or accepted by these tests.
+
+For activation, use [hosted setup](docs/hosting.md), the [Retell transport](docs/retell-transport.md),
+and the [canonical RP protocol](docs/workflow-adapter.md). Native DTMF, transfer and
+same-call sensitive authentication are disabled. Financial account identifiers must
+never enter this AI call. Categorical answers remain explicitly unverified reports.
 
 ## Try it
 
@@ -36,8 +42,10 @@ VOICE_TOKEN=synthetic-coordinator-token target/debug/voice result OPERATION_ID
 ```
 
 Every response is JSON. `voice end OPERATION_ID` requests termination;
-`voice revoke APPROVAL_ID` requires the simulated user credential.
+`voice revoke APPROVAL_ID` requires a user credential.
 `voice doctor` lists setup gates. The `--via user` flag grants no authority.
+`voice status` includes `canonical_writeback.pending_versions` and the latest
+acknowledged version; a local result alone does not mean RP accepted its writeback.
 
 A completed phone call is not proof that a business task succeeded. Results
 remain `needs_review` until the canonical workflow assesses the evidence.

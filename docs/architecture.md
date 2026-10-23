@@ -10,7 +10,10 @@ demo does not prove laptop-sleep independence.
 The control boundary assigns a principal from authentication, never from request
 JSON. The demo has separate synthetic user/coordinator credentials and binds only
 to literal loopback. These known demo tokens provide role tests, not production
-identity assurance. No provider credentials are loaded.
+identity assurance. Hosted mode instead reads private scoped credential hashes,
+checks expiry/revocation on every request, and loads only explicitly configured
+provider/RP secrets after an affirmative runtime flag. It cannot reopen a simulation
+database as hosted state.
 
 Only the user principal can issue or revoke an approval. A snapshot binds the
 destination and provenance, purpose, facts and versions, allowed/forbidden actions,
@@ -22,9 +25,10 @@ normalization. Unknown fields are rejected. This is an application canonical for
 not RFC 8785. Reordering JSON object keys cannot change the typed digest; reordering
 semantic lists does change it. Struct/schema changes require a new contract version.
 
-SQLite uses WAL and FULL synchronous commits. An immediate transaction checks the
-fresh upstream gate, reserves budget and active-owner exclusivity, consumes approval
-and creates the operation. A second transaction marks the send as possibly performed
+SQLite uses WAL and FULL synchronous commits. Hosted authority checks happen outside
+write transactions. The canonical RP service atomically reserves its own capacity;
+the local immediate transaction rechecks approval, reserves phone budget and active
+owner/work-item exclusivity, consumes approval and creates the operation. A second transaction marks the send as possibly performed
 before calling the provider. A crash in that gap deliberately sacrifices availability:
 the attempt stays unknown, even if no send occurred. Reconciliation uses only reads.
 No create retry is implemented, including Retell's limited one-hour idempotency window.
@@ -62,15 +66,30 @@ primary call ends.
 
 ## Canonical workflow
 
-The service stores operational calls, never a claims ledger. The synthetic gate checks
-an opaque workflow reference/version/expiry before reservation and dispatch. A real
-upstream adapter must perform authoritative reservation and revocation checks.
+The service stores operational calls, never a claims ledger. The synthetic gate is
+isolated from hosted mode. Hosted mode checks the generic RP authority at preview,
+reservation and dispatch. A continuation recheck becomes due after five seconds
+or when its lease expires; bounded network work still contributes to actual latency. Authority uncertainty requests a stop. The
+canonical service must implement the protocol in workflow-adapter.md.
+
+Dispatch is a bounded lease, not an atomic transaction spanning two providers.
+After a grant and local send fence, a concurrent revocation is an in-flight stop
+request. The worker refreshes its monotonic clock after blocking operations and
+Retell rechecks the lease and approval immediately before POST. No claim is made
+that a revocation racing an already admitted network send can retract that send.
+Authoritative lookup/create receipts establish hosted call identity; signed phase
+reports cannot seize an unknown call ID.
 
 A durable outbox carries operation ID, result version, canonical work reference/version,
 observed evidence references, cost uncertainty and next action. The consumer must
 deduplicate operation/version and use optimistic concurrency. Conflict or lost
 acknowledgement leaves the item pending; retrying that write never triggers a call.
 No model success label or transfer can mark a claim submitted, paid or complete.
+Categorical answer callbacks carry only a closed vocabulary of status, document
+categories and next step. They are marked unverified_model_report and remain
+needs_review. Signatures establish source, not truth. The outbox carries these
+observations to the existing canonical record; it does not create claim authority.
+Later corrective versions are attempted even if an older writeback failed.
 
 ## Privacy and limitations
 
@@ -87,5 +106,19 @@ backup policies, scoped deletion and tested recovery. Minimal operational tombst
 retention is unresolved; old keys must not become new dial authority.
 
 The demo gate, trust directory, rates, fixed credentials and simulated provider are
-explicit test substitutes. Production startup, worker-health admission, secret-manager
-integration, a real RP adapter and browser controls are deliberately unavailable.
+explicit test substitutes. The hosted transport/auth/configuration code is available,
+but real provider setup, the actual RP-side protocol implementation and deployment
+acceptance remain external gates. Native DTMF and transfer stay disabled.
+
+Hosted admission allows one active or uncertain call globally. This bounds provider
+and authority servicing without a worker pool; a different owner cannot queue a
+second call. Late contradictory evidence can still reveal an older uncontrolled
+leg, which latches a global incident and requests stops. New report callbacks are
+rejected after AI stop/takeover/termination; only exact previous reports can replay.
+A registered call found by authoritative lookup binds its ID even without a vendor
+start timestamp, so revocation can stop ringing without fabricating start evidence.
+
+Ended calls awaiting evidence are background work. At most one receives a lookup
+per tick, selected by a rotating cursor. A fresh database check suppresses that
+lookup while any operation is active. A new call admitted during the check/send
+race can encounter one bounded historical lookup, never a full batch of them.

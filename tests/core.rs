@@ -1051,7 +1051,8 @@ fn rejected_lookup_observations_cannot_starve_stops_for_any_active_owner() {
         let mut longer = intent();
         longer.limits.duration_seconds = 600;
         longer.limits.budget_cents = 200;
-        let shorter = intent();
+        let mut shorter = intent();
+        shorter.work_item.reference = "other_synthetic_work".into();
         let revoked_approval = c.approve(&revoked_owner, &longer, 1000).unwrap();
         let expired_approval = c.approve(&expired_owner, &shorter, 1000).unwrap();
         let revoked_op = c

@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use voice_agent::contract::{Destination, Fact, Handoff, Intent, Limits, WorkItem};
@@ -10,7 +10,7 @@ use voice_agent::{now, Error, Result};
 #[derive(Parser)]
 #[command(
     version,
-    about = "Approval-bound calling CLI. This release supports synthetic simulation only."
+    about = "Approval-bound calling CLI with synthetic and explicitly configured Retell runtimes."
 )]
 struct Cli {
     #[arg(long, global = true, default_value = "http://127.0.0.1:8787")]
@@ -61,17 +61,29 @@ enum Command {
     Revoke {
         approval_id: String,
     },
-    /// Run the local synthetic controller and its durable worker.
+    /// Run a local simulation or an explicitly configured hosted controller.
     Serve {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        provider_db: PathBuf,
-        #[arg(long, default_value = "127.0.0.1:8787")]
-        listen: SocketAddr,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "config")]
+        db: Option<PathBuf>,
+        #[arg(long, conflicts_with = "config")]
+        provider_db: Option<PathBuf>,
+        #[arg(long, conflicts_with = "config")]
+        listen: Option<SocketAddr>,
+        #[arg(long, conflicts_with = "config")]
         simulation: bool,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Enables configured provider execution; every call still needs user approval.
+        #[arg(long, requires = "config", conflicts_with = "simulation")]
+        enable_live_calling: bool,
     },
+    /// Check nonsecret configuration and permissions; never reads runtime secrets or uses network.
+    ConfigCheck {
+        #[arg(long)]
+        config: PathBuf,
+    },
+    /// Hash an already provisioned VOICE_TOKEN without printing or storing the bearer.
+    CredentialDigest,
     /// Explain remaining launch gates without reading credentials or contacting services.
     Doctor,
 }
@@ -156,23 +168,12 @@ fn identifier(id: &str) -> Result<&str> {
 }
 
 fn request(base: &str, path: &str, data: Option<Value>) -> Result<Value> {
-    let mut url = reqwest::Url::parse(base).map_err(|_| Error::new("invalid_controller_url", 2))?;
-    let host = url.host_str().unwrap_or("").trim_matches(['[', ']']);
-    let ip = host
-        .parse::<IpAddr>()
-        .map_err(|_| Error::new("simulation_requires_literal_loopback", 4))?;
-    if !ip.is_loopback()
-        || url.scheme() != "http"
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.path() != "/"
-    {
-        return Err(Error::new("simulation_requires_literal_loopback", 4));
-    }
+    let mut url = voice_agent::config::controller_origin(base)?;
     let token = std::env::var("VOICE_TOKEN")
         .map_err(|_| Error::new("controller_credential_required", 3))?;
+    if url.scheme() == "https" {
+        voice_agent::config::token_digest(&token)?;
+    }
     url.set_path(path);
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -277,14 +278,44 @@ fn run(cli: Cli) -> Result<Value> {
             provider_db,
             listen,
             simulation,
+            config,
+            enable_live_calling,
         } => {
-            voice_agent::server::run(db, provider_db, listen, simulation)?;
+            if let Some(path) = config {
+                if !enable_live_calling {
+                    return Err(Error::new("explicit_live_runtime_enablement_required", 4));
+                }
+                let config = voice_agent::config::HostedConfig::load(&path, now())?;
+                voice_agent::server::run_hosted(config, enable_live_calling)?;
+            } else {
+                if !simulation {
+                    return Err(Error::new("explicit_runtime_mode_required", 4));
+                }
+                voice_agent::server::run(
+                    db.ok_or(Error::new("simulation_database_required", 2))?,
+                    provider_db.ok_or(Error::new("simulation_provider_database_required", 2))?,
+                    listen.unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 8787))),
+                    simulation,
+                )?;
+            }
             Ok(Value::Null)
         }
+        Command::ConfigCheck { config } => {
+            let config = voice_agent::config::HostedConfig::load(&config, now())?;
+            Ok(json!({"configuration_valid":true,"live_calling":false,
+                "operator_starts_enabled":config.starts_enabled,
+                "runtime_secrets_read":false,"network_requests":0,
+                "live_acceptance_verified":false}))
+        }
+        Command::CredentialDigest => {
+            let token = std::env::var("VOICE_TOKEN")
+                .map_err(|_| Error::new("controller_credential_required", 3))?;
+            Ok(json!({"token_sha256":voice_agent::config::token_digest(&token)?}))
+        }
         Command::Doctor => Ok(
-            json!({"live_calling":false,"simulation_available":true,"setup_gates":[
+            json!({"live_calling":false,"simulation_available":true,"configured_runtime_available":true,"live_acceptance_verified":false,"setup_gates":[
                 "Explicit approval for funded provider account, outbound number and controlled calls",
-                "Production user authentication, coordinator scopes, HTTPS, hosted worker and durable storage",
+                "Provision expiring owner/coordinator credentials, HTTPS, hosted worker and private durable storage",
                 "Verified official destinations, pinned published agent and narrowly scoped tools",
                 "Canonical upstream policy gates and evidence-backed versioned writeback",
                 "Approved geography, consent, retention, rates and residual cost exposure",

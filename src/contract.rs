@@ -247,6 +247,8 @@ pub struct CallResult {
     pub next_action: String,
     pub actual_cost_cents: Option<u32>,
     pub estimated_cost_cents: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reported_answers: Vec<crate::observations::AnswerEvidence>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Operation {
@@ -351,7 +353,13 @@ impl Operation {
         }
         if self.all_legs_ended && self.analysis_seen {
             self.result.status = ResultStatus::NeedsReview;
-            self.result.outcome = self.stop_reason.clone().unwrap_or("unknown".into());
+            self.result.outcome = self.stop_reason.clone().unwrap_or_else(|| {
+                if self.result.reported_answers.is_empty() {
+                    "unknown".into()
+                } else {
+                    "unverified_reported_answer".into()
+                }
+            });
             self.result.next_action = "Review source evidence in the canonical workflow; use a separate direct call for verification".into();
         }
         if matches!(
